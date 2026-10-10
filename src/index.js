@@ -607,6 +607,7 @@ async function handleWatch(request, url) {
 // ─── صفحه خانه ───
 function homePage() {
   return htmlPage("خانه", `
+    <style>.top form.search{display:none}</style>
     <div class="center">
       <div class="big">▶ یوتیوب لایت</div>
       <div class="sub">تماشای YouTube بدون تبلیغات، بدون صفحه رضایت و بدون ردیابی</div>
@@ -618,8 +619,20 @@ function homePage() {
         🔍 جستجوی سریع · ▶ پخش مستقیم ویدیو (پیش‌فرض 360p با صدا)<br>
         🎧 حالت فقط‌صدا · ⬇ دانلود مستقیم با کیفیت‌های مختلف<br>
         🚫 بدون تبلیغات · 🚫 بدون ردیابی · 🚫 بدون نیاز به ورود<br>
-        <a href="/setup">⚡ نصب روی حساب کلودفلر خودت</a>
       </div>
+    </div>
+    <div class="panel" style="max-width:640px;margin:36px auto 0;text-align:right">
+      <b style="font-size:17px">🛠 سایت مال خودت رو بساز</b>
+      <p class="note" style="margin:8px 0 14px">هر کس می‌تونه یه کپی شخصی از یوتیوب لایت روی حساب کلودفلر خودش داشته باشه. رایگانه، توکن، رمز یا کوکی لازم نیست جایی وارد کنی، و سایتت مال خودته.</p>
+      <ol class="note" style="padding-inline-start:20px;line-height:2">
+        <li>روی دکمهٔ زیر بزن و با حساب کلودفلرت وارد شو (اگه حساب نداری، رایگانه).</li>
+        <li>اسم سایتت رو انتخاب کن و نصب رو تأیید کن.</li>
+        <li>آدرس سایتت آماده‌ست؛ همون‌جا تنظیمات ترجمه رو هم داری.</li>
+      </ol>
+      <p style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <a class="btn" href="https://deploy.workers.cloudflare.com/?url=https://github.com/Alisarani7021/yt-lite" target="_blank" rel="noopener">⚡ نصب با یک کلیک</a>
+        <a class="chip" href="/setup" style="align-self:center">راهنمای کامل</a>
+      </p>
     </div>
   `);
 }
