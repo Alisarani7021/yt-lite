@@ -41,5 +41,19 @@ npx wrangler deploy</pre>
     <p class="note" style="margin-top:8px">نکته: کلید API فقط توی KV ورکر خودت ذخیره می‌شه. اگه ورکرت رو دوباره Deploy کنی، Secret و تنظیمات سر جاشون می‌مونن.</p>
   </div>
 
+  <div class="panel" id="cookie" style="margin-bottom:14px">
+    <b>اختیاری: کوکی یوتیوب برای ویدیوهایی که باز نمی‌شن</b>
+    <p class="note" style="margin-top:8px;line-height:2">بعضی ویدیوها بدون ورود باز نمی‌شن (پیام «LOGIN_REQUIRED»). اگه این پیام رو دیدی، می‌تونی کوکی یه حساب گوگل <b>دست‌دوم</b> رو به ورکرت بدی.</p>
+    <p class="note" style="margin-top:8px;color:#ffb3b3">⚠️ فقط از یه حساب گوگل جدا و بی‌اهمیت استفاده کن. هرگز کوکی حساب اصلی‌ات رو نده؛ کوکی مثل رمز عبوره. امکان داره گوگل اون حساب رو محدود کنه.</p>
+    <ol class="note" style="padding-inline-start:20px;margin-top:8px;line-height:2">
+      <li>با یه حساب گوگل دست‌دوم، روی کامپیوتر (کروم) وارد <b>youtube.com</b> شو.</li>
+      <li>کلید <b>F12</b> رو بزن و تب <b>Network</b> (یا «شبکه») رو باز کن.</li>
+      <li>صفحه رو رفرش کن (F5) و روی یه درخواست که به <b>youtube.com</b> میره کلیک کن.</li>
+      <li>توی بخش <b>Request Headers</b> (سرصفحه‌های درخواست)، خط <b>cookie:</b> رو پیدا کن و کل مقدارش رو کپی کن.</li>
+      <li>توی داشبورد کلودفلر ← ورکرت ← Settings ← Variables and Secrets ← Add ← نوع <b>Secret</b> و اسم <code>YT_COOKIE</code> رو بذار و مقدار کپی‌شده رو توش بچسبون. ذخیره کن.</li>
+      <li>وقتی از حساب دست‌دوم خارج بشی یا کوکی منقضی بشه، دوباره همین مراحل رو تکرار کن.</li>
+    </ol>
+  </div>
+
   <p class="note"><a href="/">← بازگشت به خانه</a></p>
 </div>
