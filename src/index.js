@@ -448,6 +448,57 @@ function subsUI(vidExpr) {
 }
 
 
+
+// ─── PWA: نصب روی گوشی، اشتراک‌گذاری از اپ یوتیوب، کش آفلاین ───
+const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="110" fill="#06060a"/><rect x="60" y="120" width="392" height="272" rx="60" fill="#ff2d55"/><path d="M215 190v132l110-66z" fill="#fff"/></svg>';
+
+function manifestResp() {
+  const m = {
+    name: "یوتیوب لایت", short_name: "یوتیوب لایت", lang: "fa", dir: "rtl",
+    start_url: "/", scope: "/", display: "standalone",
+    background_color: "#06060a", theme_color: "#ff2d55",
+    icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }],
+    share_target: { action: "/share", method: "GET", params: { title: "title", text: "text", url: "url" } },
+  };
+  return new Response(JSON.stringify(m), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "public, max-age=3600" } });
+}
+
+const SW_JS = [
+  'const CACHE = "yt-lite-v1";',
+  'self.addEventListener("install", (e) => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/icon.svg"])).catch(() => {})); });',
+  'self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); });',
+  'self.addEventListener("fetch", (e) => {',
+  '  const u = new URL(e.request.url);',
+  '  if (e.request.method !== "GET" || u.origin !== location.origin) return;',
+  '  if (u.pathname === "/subs") {',
+  '    e.respondWith(caches.open(CACHE).then(async (c) => {',
+  '      const hit = await c.match(e.request);',
+  '      const net = fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => null);',
+  '      return hit || (await net) || new Response("WEBVTT", { headers: { "content-type": "text/vtt" } });',
+  '    }));',
+  '    return;',
+  '  }',
+  '  if (["/", "/search", "/settings", "/setup"].includes(u.pathname)) {',
+  '    e.respondWith(fetch(e.request).then((r) => { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, cp)); return r; }).catch(() => caches.match(e.request)));',
+  '  }',
+  '});',
+].join("\n");
+
+function swResp() {
+  return new Response(SW_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-cache" } });
+}
+
+function handleShare(url) {
+  const raw = [url.searchParams.get("url"), url.searchParams.get("text"), url.searchParams.get("title")].filter(Boolean).join(" ");
+  const m = raw.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/);
+  if (m) return Response.redirect(new URL("/watch?v=" + m[1], url), 302);
+  const q = raw.trim();
+  if (q) return Response.redirect(new URL("/search?q=" + encodeURIComponent(q), url), 302);
+  return Response.redirect(new URL("/", url), 302);
+}
+
+const PWA_HEAD = '<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#ff2d55"><link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icon.svg"><script>if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js");</script>';
+
 // ─── تنظیمات ترجمه: URL + کلید + مدل (فقط با توکن مدیر) ───
 let ADMIN_TOKEN = "";
 function settingsForm(token, base, models, model, msg) {
@@ -516,7 +567,7 @@ function watchShell(url) {
   return new Response(`<!DOCTYPE html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>در حال باز کردن — یوتیوب لایت</title>
+<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#ff2d55"><link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icon.svg"><script>if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js");</script><title>در حال باز کردن — یوتیوب لایت</title>
 <style>
 body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Tahoma,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px}
 .spin{width:44px;height:44px;border:4px solid #333;border-top-color:#ff0033;border-radius:50%;animation:s 0.9s linear infinite;margin-bottom:18px}
@@ -775,20 +826,15 @@ async function llmTranslate(cfg, lines) {
   return arr.map((x, i) => String(x || lines[i]));
 }
 
-async function handleSubs(url) {
-  const v = (url.searchParams.get("v") || "").trim();
-  if (!/^[\w-]{6,20}$/.test(v)) return vttResp("WEBVTT\n\n", 400);
-  const key = "subfa:" + v;
-  if (KV) {
-    try { const c = await KV.get(key); if (c) return vttResp(c); } catch (e) {}
-  }
-  if (!AI_BIND) return vttResp("WEBVTT\n\n", 503);
+const SUB_CHUNK = 240;
+
+async function getCueList(v) {
   const player = await getPlayer(v);
   const tracks = (((player.captions || {}).playerCaptionsTracklistRenderer || {}).captionTracks) || [];
-  if (!tracks.length) return vttResp("WEBVTT\n\n", 404);
+  if (!tracks.length) return { status: 404 };
   const t = tracks.find(x => /^en/.test(x.languageCode)) || tracks[0];
   const r = await fetch(t.baseUrl);
-  if (!r.ok) return vttResp("WEBVTT\n\n", 502);
+  if (!r.ok) return { status: 502 };
   const xml = await r.text();
   const cues = [];
   const dec = (x) => x.replace(/<[^>]+>/g, "").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -800,22 +846,85 @@ async function handleSubs(url) {
     const start = parseInt(m[1], 10), dur = parseInt(m[2], 10) || 2500;
     cues.push({ start, end: start + dur, text });
   }
-  // سقف برای محدودیت Workers (تعداد درخواست‌ها)
-  const use = cues.slice(0, 240);
-  const cfg = await getAICfg();
-  const useLLM = !!(cfg && cfg.base && cfg.key && cfg.model);
+  return { cues };
+}
+
+async function translateCues(cues, cfg, useLLM) {
+  const size = useLLM ? 30 : 10;
   const batches = [];
-  for (let i = 0; i < use.length; i += (useLLM ? 30 : 10)) batches.push(use.slice(i, i + (useLLM ? 30 : 10)));
-  const results = await Promise.all(batches.map(async (b) => {
-    const lines = b.map(c => c.text);
+  for (let i = 0; i < cues.length; i += size) batches.push(cues.slice(i, i + size).map(c => c.text));
+  const results = await Promise.all(batches.map(async (lines) => {
     if (useLLM) { try { return await llmTranslate(cfg, lines); } catch (e) { /* کمکی */ } }
     try { return await translateBatch(lines); } catch (e) { return lines; }
   }));
-  const fa = [].concat(...results);
+  return [].concat(...results);
+}
+
+async function getChunk(v, i, cues, cfg, useLLM) {
+  const key = "subchunk:" + v + ":" + i;
+  if (KV) { try { const c = await KV.get(key, { type: "json" }); if (Array.isArray(c)) return c; } catch (e) {} }
+  const part = cues.slice(i * SUB_CHUNK, (i + 1) * SUB_CHUNK);
+  const tr = await translateCues(part, cfg, useLLM);
+  if (KV && tr.length === part.length) { try { await KV.put(key, JSON.stringify(tr), { expirationTtl: 7 * 24 * 3600 }); } catch (e) {} }
+  return tr;
+}
+
+function buildVtt(cues, texts) {
   let body = "WEBVTT\n\n";
-  use.forEach((c, i) => { body += vttTime(c.start) + " --> " + vttTime(c.end) + "\n" + fa[i] + "\n\n"; });
-  if (KV && use.length) { try { await KV.put(key, body, { expirationTtl: 7 * 24 * 3600 }); } catch (e) {} }
-  return vttResp(body);
+  cues.forEach((c, i) => { body += vttTime(c.start) + " --> " + vttTime(c.end) + "\n" + (texts[i] || c.text) + "\n\n"; });
+  return body;
+}
+
+async function handleSubs(url, ctx) {
+  const v = (url.searchParams.get("v") || "").trim();
+  if (!/^[\w-]{6,20}$/.test(v)) return vttResp("WEBVTT\n\n", 400);
+  const key = "subfa:" + v;
+  if (KV) {
+    try { const c = await KV.get(key); if (c) return vttResp(c); } catch (e) {}
+  }
+  if (!AI_BIND) return vttResp("WEBVTT\n\n", 503);
+  const got = await getCueList(v);
+  if (got.status) return vttResp("WEBVTT\n\n", got.status);
+  const cues = got.cues;
+  if (!cues.length) return vttResp("WEBVTT\n\n", 404);
+  const cfg = await getAICfg();
+  const useLLM = !!(cfg && cfg.base && cfg.key && cfg.model);
+  const n = Math.ceil(cues.length / SUB_CHUNK);
+
+  // بخش اول همین الان ترجمه می‌شود تا پخش زود شروع شود
+  const first = await getChunk(v, 0, cues, cfg, useLLM);
+
+  // بقیه‌ی بخش‌ها در پس‌زمینه؛ قفل برای جلوگیری از اجرای تکراری
+  if (n > 1 && ctx && KV) {
+    let busy = false;
+    try { busy = !!(await KV.get("subbusy:" + v)); } catch (e) {}
+    if (!busy) {
+      try { await KV.put("subbusy:" + v, "1", { expirationTtl: 900 }); } catch (e) {}
+      ctx.waitUntil((async () => {
+        try {
+          for (let i = 1; i < n; i++) await getChunk(v, i, cues, cfg, useLLM);
+          const all = [];
+          for (let i = 0; i < n; i++) {
+            const c = await KV.get("subchunk:" + v + ":" + i, { type: "json" });
+            all.push(...(Array.isArray(c) ? c : cues.slice(i * SUB_CHUNK, (i + 1) * SUB_CHUNK).map(x => x.text)));
+          }
+          await KV.put(key, buildVtt(cues, all), { expirationTtl: 7 * 24 * 3600 });
+        } finally {
+          try { await KV.delete("subbusy:" + v); } catch (e) {}
+        }
+      })());
+    }
+  }
+
+  // پاسخ فوری: بخش‌های آماده ترجمه‌شده، بقیه انگلیسی تا وقتی کامل شود
+  const texts = [];
+  for (let i = 0; i < n; i++) {
+    let c = i === 0 ? first : null;
+    if (!c && KV) { try { c = await KV.get("subchunk:" + v + ":" + i, { type: "json" }); } catch (e) {} }
+    if (Array.isArray(c)) texts.push(...c);
+    else texts.push(...cues.slice(i * SUB_CHUNK, (i + 1) * SUB_CHUNK).map(x => x.text));
+  }
+  return vttResp(buildVtt(cues, texts));
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -958,7 +1067,7 @@ a{color:#ff4d5e}
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (env && env.YT_CACHE) KV = env.YT_CACHE; // کش مشترک (KV)
     if (env && env.YT_COOKIE) YT_COOKIE = env.YT_COOKIE; // کوکی حساب (secret)
     if (env && env.AI) AI_BIND = env.AI;
@@ -969,7 +1078,11 @@ export default {
       if (url.pathname === "/") return homePage();
       if (url.pathname === "/search") return handleSearch(url);
       if (url.pathname === "/channel") return handleChannel(url);
-      if (url.pathname === "/subs") return handleSubs(url);
+      if (url.pathname === "/subs") return handleSubs(url, ctx);
+      if (url.pathname === "/manifest.webmanifest") return manifestResp();
+      if (url.pathname === "/sw.js") return swResp();
+      if (url.pathname === "/icon.svg") return new Response(ICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
+      if (url.pathname === "/share") return handleShare(url);
       if (url.pathname === "/settings") return handleSettings(request, url);
       if (url.pathname === "/setup") return setupPage();
       if (url.pathname === "/party") return partyPage(url);
