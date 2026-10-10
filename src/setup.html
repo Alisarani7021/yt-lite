@@ -1,0 +1,32 @@
+<div class="panel" style="max-width:640px;margin:0 auto;text-align:right">
+  <h2 style="margin-top:4px">نصب یوتیوب لایت روی حساب کلودفلر خودت</h2>
+  <p class="note" style="margin:6px 0 16px">هزینه نداره. ورکر روی اکانت خودت ساخته می‌شه و هیچ توکنی به ما داده نمی‌شه.</p>
+
+  <div class="panel" style="margin-bottom:14px">
+    <b>🔒 امنیت</b>
+    <p class="note">این سایت هیچ توکن یا رمزی از تو نمی‌خواد. نصب با ورود خودت به کلودفلر در همون مرورگر انجام می‌شه.</p>
+  </div>
+
+  <div class="panel" style="margin-bottom:14px">
+    <b>روش ۱: نصب با یک کلیک (پیشنهادی)</b>
+    <ol class="note" style="padding-inline-start:20px;margin-top:8px;line-height:2">
+      <li>دکمهٔ زیر رو بزن و با حساب کلودفلر خودت وارد شو.</li>
+      <li>اسم ورکر رو انتخاب کن و تأیید کن؛ KV و بقیهٔ منابع خودکار ساخته می‌شن.</li>
+      <li>بعد از نصب، آدرس سایتت نشون داده می‌شه.</li>
+    </ol>
+    <p style="margin-top:12px"><a class="btn" href="https://deploy.workers.cloudflare.com/?url=https://github.com/Alisarani7021/yt-lite" target="_blank" rel="noopener">⚡ Deploy to Cloudflare</a></p>
+  </div>
+
+  <div class="panel" style="margin-bottom:14px">
+    <b>روش ۲: با ترمینال خودت (برای کاربرهای فنی)</b>
+    <p class="note" style="margin-top:8px">توکن رو فقط روی کامپیوتر خودت وارد کن، نه جای دیگه:</p>
+<pre style="direction:ltr;text-align:left;white-space:pre-wrap;background:#0b0b10;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:12px;color:#ddd;overflow-x:auto">git clone https://github.com/Alisarani7021/yt-lite
+cd yt-lite
+export CLOUDFLARE_API_TOKEN=توکن_خودت
+npx wrangler kv namespace create YT_CACHE
+# id خروجی رو داخل wrangler.toml بذار، بعد:
+npx wrangler deploy</pre>
+  </div>
+
+  <p class="note"><a href="/">← بازگشت به خانه</a></p>
+</div>

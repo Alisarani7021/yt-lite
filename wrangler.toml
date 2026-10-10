@@ -1,0 +1,26 @@
+name = "yt-lite"
+main = "src/index.js"
+compatibility_date = "2026-10-09"
+
+# کش مشترک (KV) — اگر نباشد، کش حافظهٔ ایزوله کار می‌کند
+[[kv_namespaces]]
+binding = "YT_CACHE"
+
+# هوش مصنوعی برای ترجمهٔ زیرنویس (Workers AI)
+[ai]
+binding = "AI"
+
+# اتاق تماشای همزمان (Durable Object)
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# قالب‌های HTML به‌صورت متن وارد ورکر می‌شوند
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true

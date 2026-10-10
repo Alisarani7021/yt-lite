@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>جستجو: __Q__ — یوتیوب لایت</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#06060a;--ink:#f4f4f8;--muted:#8d8da0;--line:rgba(255,255,255,.08);--red:#ff2d55;--glow:rgba(255,0,51,.45)}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-padding-top:96px}
+body{background:var(--bg);color:var(--ink);font-family:'Vazirmatn',Tahoma,system-ui,sans-serif;line-height:1.7;min-height:100vh;padding-bottom:150px}
+a{color:inherit;text-decoration:none}
+button,input{font:inherit;color:inherit}
+svg{width:20px;height:20px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- background scene ---------- */
+.scene{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:radial-gradient(900px 600px at 85% -10%,rgba(255,0,51,.16),transparent 60%),radial-gradient(800px 600px at -10% 110%,rgba(110,60,255,.14),transparent 60%),var(--bg)}
+.orb{position:absolute;border-radius:50%;filter:blur(28px);opacity:.55;animation:drift 18s ease-in-out infinite alternate;translate:calc(var(--px,0)*var(--d,40px)) calc(var(--py,0)*var(--d,40px))}
+.orb.a{width:340px;height:340px;top:-90px;inset-inline-end:-80px;--d:-70px;background:radial-gradient(circle at 35% 30%,#ff8aa0,#ff0033 45%,transparent 70%)}
+.orb.b{width:320px;height:320px;bottom:8%;inset-inline-start:-100px;--d:50px;animation-duration:24s;background:radial-gradient(circle at 60% 40%,#a895ff,#3b1fa8 50%,transparent 70%)}
+.orb.c{width:200px;height:200px;top:42%;inset-inline-start:48%;--d:110px;opacity:.22;animation-duration:30s;background:radial-gradient(circle at 40% 35%,#8ffbe6,#0ea5a0 45%,transparent 70%)}
+@keyframes drift{to{transform:translate3d(-30px,40px,0) scale(1.12)}}
+.floor{position:absolute;left:-40%;right:-40%;bottom:-32%;height:80%;opacity:.45;transform:perspective(520px) rotateX(64deg);background-image:linear-gradient(rgba(255,45,85,.25) 1px,transparent 1px),linear-gradient(90deg,rgba(255,45,85,.25) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:linear-gradient(transparent,#000 70%);mask-image:linear-gradient(transparent,#000 70%)}
+
+/* ---------- header ---------- */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:linear-gradient(rgba(6,6,10,.9),rgba(6,6,10,.6));backdrop-filter:blur(22px) saturate(1.6);-webkit-backdrop-filter:blur(22px) saturate(1.6);border-bottom:1px solid var(--line)}
+.top-in{max-width:1100px;margin:0 auto;padding:14px 18px;display:flex;align-items:center;gap:18px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;white-space:nowrap}
+.mark{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(145deg,#ff6b87,#ff0033 55%,#a80022);box-shadow:0 12px 24px -8px var(--glow),inset 0 1px 0 rgba(255,255,255,.45),inset 0 -3px 6px rgba(0,0,0,.25);transform:perspective(300px) rotateX(14deg)}
+.mark svg{width:16px;height:16px;fill:#fff;stroke:none;margin-inline-start:2px}
+.search{flex:1;display:flex;gap:10px;max-width:580px}
+.field{position:relative;flex:1;min-width:0}
+.field>svg{position:absolute;top:50%;inset-inline-start:16px;transform:translateY(-50%);width:18px;height:18px;color:var(--muted)}
+.field input{width:100%;height:46px;padding:0 46px 0 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.04);outline:none;box-shadow:inset 0 2px 8px rgba(0,0,0,.55);transition:border-color .25s,box-shadow .25s}
+.field input::placeholder{color:#6d6d80}
+.field input:focus{border-color:rgba(255,0,51,.6);box-shadow:inset 0 2px 8px rgba(0,0,0,.55),0 0 0 4px rgba(255,0,51,.15)}
+.go{height:46px;padding:0 24px;border:0;border-radius:16px;cursor:pointer;font-weight:700;background:linear-gradient(180deg,#ff4d6d,#e0002e);box-shadow:0 14px 26px -10px var(--glow),inset 0 1px 0 rgba(255,255,255,.4);transition:transform .2s,box-shadow .2s}
+.go:hover{transform:translateY(-2px);box-shadow:0 18px 30px -10px var(--glow),inset 0 1px 0 rgba(255,255,255,.4)}
+.go:active{transform:translateY(1px)}
+
+/* ---------- results ---------- */
+main{max-width:1100px;margin:0 auto;padding:30px 18px 0}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+h1{font-size:clamp(20px,3vw,28px);font-weight:800;letter-spacing:-.2px}
+h1 span{color:var(--red)}
+.count{font-size:13px;color:var(--muted);padding:6px 14px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}
+.card{position:relative;padding:12px 12px 18px;border-radius:24px;border:1px solid var(--line);background:linear-gradient(160deg,rgba(255,255,255,.08),rgba(255,255,255,.01) 60%),#0d0d12;transform-style:preserve-3d;transform-origin:50% 33%;transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 34px 50px -26px #000;transition:transform .3s cubic-bezier(.2,.7,.2,1),box-shadow .35s,border-color .35s;animation:rise .7s cubic-bezier(.2,.7,.2,1) backwards;animation-delay:calc(var(--i,0)*70ms)}
+.card::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .35s;background:radial-gradient(circle at var(--mx,50%) var(--my,0%),rgba(255,255,255,.17),transparent 55%)}
+@media (hover:hover){.card:hover{border-color:rgba(255,45,85,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 46px 70px -28px #000,0 0 60px -22px var(--glow)}
+.card:hover::after{opacity:1}}
+@keyframes rise{from{opacity:0;translate:0 26px}}
+.thumb{display:block;position:relative;aspect-ratio:16/9;border-radius:17px;transform-style:preserve-3d;transform:translateZ(26px);background:radial-gradient(circle at 28% 24%,rgba(255,255,255,.4),transparent 40%),linear-gradient(135deg,hsl(var(--h) 88% 60%),hsl(calc(var(--h) + 60) 78% 22%));box-shadow:0 26px 34px -16px #000,inset 0 0 0 1px rgba(255,255,255,.1)}
+.thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.play{position:absolute;inset:0;margin:auto;width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#fff,#d9d9e3);box-shadow:0 16px 30px rgba(0,0,0,.5),inset 0 -3px 6px rgba(0,0,0,.12);opacity:0;transform:translateZ(60px) scale(.6);transition:opacity .35s,transform .5s cubic-bezier(.2,.8,.2,1)}
+.play svg{width:20px;height:20px;fill:#111;stroke:none;margin-inline-start:3px}
+@media (hover:hover){.card:hover .play{opacity:1;transform:translateZ(60px) scale(1)}}
+.dur{position:absolute;bottom:10px;inset-inline-end:10px;display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:9px;font-size:12px;font-weight:600;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.12);transform:translateZ(24px)}
+.dur svg{width:13px;height:13px;stroke-width:2}
+.title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:3.1em;margin:16px 6px 8px;font-weight:700;font-size:15px;line-height:1.55;transition:color .2s}
+@media (hover:hover){.title:hover{color:#ff6b87}}
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:0 6px;font-size:12.5px;color:var(--muted)}
+.meta a{color:#c6c6d2;transition:color .2s}
+@media (hover:hover){.meta a:hover{color:#fff}}
+.meta span{display:inline-flex;align-items:center;gap:5px}
+.meta svg{width:14px;height:14px}
+
+/* ---------- pagination ---------- */
+.pager{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;margin-top:46px}
+.pager button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:46px;height:46px;padding:0 14px;border-radius:15px;border:1px solid var(--line);cursor:pointer;font-weight:700;background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.02));box-shadow:0 12px 22px -12px #000,inset 0 1px 0 rgba(255,255,255,.12);transition:transform .2s,box-shadow .2s,background .2s}
+.pager button:hover:not(:disabled){transform:translateY(-3px);box-shadow:0 18px 28px -12px #000,inset 0 1px 0 rgba(255,255,255,.16)}
+.pager button:active:not(:disabled){transform:translateY(1px)}
+.pager button:disabled{opacity:.3;cursor:default}
+.pager .cur{color:#fff;border-color:transparent;background:linear-gradient(180deg,#ff4d6d,#e0002e);box-shadow:0 16px 30px -10px var(--glow),inset 0 1px 0 rgba(255,255,255,.45)}
+.pager .step svg{width:18px;height:18px}
+
+/* ---------- bottom navigation dock ---------- */
+.dock{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);z-index:30;display:flex;gap:6px;padding:8px;border-radius:26px;background:linear-gradient(180deg,rgba(40,40,52,.95),rgba(10,10,15,.97));backdrop-filter:blur(24px) saturate(1.8);-webkit-backdrop-filter:blur(24px) saturate(1.8);border:1px solid rgba(255,255,255,.1);box-shadow:0 34px 60px -20px #000,inset 0 1px 0 rgba(255,255,255,.14)}
+.dock a{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:84px;padding:9px 14px 8px;border-radius:19px;color:var(--muted);font-size:12px;font-weight:600;white-space:nowrap;transition:transform .3s cubic-bezier(.2,.8,.2,1),background .3s,color .3s,box-shadow .3s}
+.dock a svg{width:22px;height:22px;transition:transform .3s}
+@media (hover:hover){.dock a:hover{color:#fff;transform:translateY(-5px);background:rgba(255,255,255,.07);box-shadow:0 16px 26px -12px #000,inset 0 1px 0 rgba(255,255,255,.12)}
+.dock a:hover svg{transform:scale(1.14)}}
+
+footer{margin-top:60px;text-align:center;font-size:12px;color:#6b6b7c;padding:0 16px}
+
+@media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.grid{grid-template-columns:1fr;gap:20px}.logo b{display:none}.top-in{padding:12px}}
+@media(max-width:420px){.dock a span{display:none}.dock a{min-width:62px;padding:12px 14px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="scene" aria-hidden="true"><span class="orb a"></span><span class="orb b"></span><span class="orb c"></span><span class="floor"></span></div>
+
+<header class="top">
+  <div class="top-in">
+    <a class="logo" href="/"><span class="mark"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span><b>یوتیوب لایت</b></a>
+    <form class="search" action="/search" method="get">
+      <div class="field">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="text" name="q" value="__Q__" placeholder="جستجو..." autocomplete="off">
+      </div>
+      <button class="go" type="submit">جستجو</button>
+    </form>
+  </div>
+</header>
+
+<main>
+  <div class="head">
+    <h1>نتایج جستجو برای «<span>__Q__</span>»</h1>
+    <span class="count" id="count"></span>
+  </div>
+  <section class="grid" id="grid"></section>
+  <nav class="pager" id="pager" aria-label="صفحه‌بندی"></nav>
+</main>
+
+<footer>یوتیوب لایت · ساخته‌شده روی Cloudflare Workers · رایگان، بدون تبلیغات و بدون ردیابی</footer>
+
+<nav class="dock" aria-label="منوی اصلی">
+  <a href="/" aria-label="خانه"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/></svg><span>خانه</span></a>
+  <a href="/party" aria-label="تماشای همزمان"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.6c2.6.2 4.4 2 5 4.9"/></svg><span>تماشای همزمان</span></a>
+  <a href="/settings" aria-label="تنظیمات ترجمه"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>تنظیمات ترجمه</span></a>
+</nav>
+
+<script>
+const PER=9;
+// [id, title, channel, channelId, duration, views]
+const DATA=__DATA__;
+
+const I={
+  play:'<path d="M8 5.5v13l10.5-6.5z"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
+  eye:'<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  prev:'<path d="m9 6 6 6-6 6"/>',
+  next:'<path d="m15 6-6 6 6 6"/>'
+};
+const $=s=>document.querySelector(s);
+const svg=k=>`<svg viewBox="0 0 24 24">${I[k]}</svg>`;
+const fa=s=>String(s).replace(/\d/g,d=>"۰۱۲۳۴۵۶۷۸۹"[d]);
+const esc=s=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const thumb=id=>"/img?u="+encodeURIComponent("https://i.ytimg.com/vi/"+id+"/hqdefault.jpg");
+const hue=id=>[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%360;
+const pages=Math.ceil(DATA.length/PER);
+let page=1;
+const grid=$("#grid"), pager=$("#pager");
+
+function card([id,title,ch,chId,dur,views],i){
+  return `<article class="card" style="--i:${i};--h:${hue(id)}">
+    <a class="thumb" href="/watch?v=${id}" aria-label="${esc(title)}">
+      <img src="${thumb(id)}" alt="" loading="lazy">
+      <span class="play">${svg("play")}</span>
+      <span class="dur">${svg("clock")}${fa(dur)}</span>
+    </a>
+    <a class="title" href="/watch?v=${id}">${esc(title)}</a>
+    <div class="meta"><a href="/channel?id=${chId}">${esc(ch)}</a><span>${svg("eye")}${fa(views)} بازدید</span></div>
+  </article>`;
+}
+
+function render(){
+  const s=(page-1)*PER;
+  grid.innerHTML=DATA.slice(s,s+PER).map(card).join("");
+  pager.innerHTML=pages<2?"":
+    `<button class="step" data-p="${page-1}" ${page===1?"disabled":""}>${svg("prev")}<span>قبلی</span></button>`+
+    Array.from({length:pages},(_,k)=>k+1).map(p=>`<button data-p="${p}" ${p===page?'class="cur" aria-current="page"':""}>${fa(p)}</button>`).join("")+
+    `<button class="step" data-p="${page+1}" ${page===pages?"disabled":""}><span>بعدی</span>${svg("next")}</button>`;
+}
+
+pager.addEventListener("click",e=>{
+  const b=e.target.closest("button[data-p]");
+  if(!b||b.disabled) return;
+  page=+b.dataset.p;
+  render();
+  grid.scrollIntoView({behavior:"smooth",block:"start"});
+});
+
+grid.addEventListener("error",e=>{if(e.target.tagName==="IMG")e.target.remove()},true);
+
+if(matchMedia("(hover:hover) and (pointer:fine)").matches){
+  grid.addEventListener("pointermove",e=>{
+    const c=e.target.closest(".card"); if(!c) return;
+    const r=c.getBoundingClientRect(), x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+    c.style.setProperty("--rx",((.5-y)*12).toFixed(2)+"deg");
+    c.style.setProperty("--ry",((x-.5)*16).toFixed(2)+"deg");
+    c.style.setProperty("--mx",(x*100).toFixed(1)+"%");
+    c.style.setProperty("--my",(y*100).toFixed(1)+"%");
+  });
+  grid.addEventListener("pointerout",e=>{
+    const c=e.target.closest(".card");
+    if(c&&!c.contains(e.relatedTarget)){c.style.setProperty("--rx","0deg");c.style.setProperty("--ry","0deg");}
+  });
+}
+addEventListener("pointermove",e=>{
+  const s=document.documentElement.style;
+  s.setProperty("--px",(e.clientX/innerWidth-.5).toFixed(3));
+  s.setProperty("--py",(e.clientY/innerHeight-.5).toFixed(3));
+});
+
+$("#count").textContent=fa(DATA.length)+" ویدیو";
+render();
+</script>
+</body>
+</html>

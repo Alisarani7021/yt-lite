@@ -1,0 +1,971 @@
+import SEARCH_HTML from "./search.html";
+import SHELL_HTML from "./shell.html";
+import SETUP_HTML from "./setup.html";
+// ─── یوتیوب لایت (YouTube Lite) ───
+// یک فرانت‌اند سبک و مستقل برای YouTube روی Cloudflare Workers
+// بدون تبلیغات، بدون صفحه رضایت (consent)، بدون ردیابی
+// جستجو با کلاینت WEB — پخش با کلاینت ANDROID_VR (URLهای مستقیم و قابل پخش)
+
+const API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+const VISITOR = "CgJVUxIEGgAgbQ%3D%3D";
+
+const CLIENTS = {
+  WEB: {
+    name: "WEB", id: "1", version: "2.20241001.00.00",
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    key: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+  },
+  VR: {
+    name: "ANDROID_VR", id: "28", version: "1.60.19",
+    ua: "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+    extra: { androidSdkVersion: 32, osName: "Android", osVersion: "12L" },
+    key: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+  },
+  ANDROID: {
+    name: "ANDROID", id: "3", version: "20.10.38",
+    ua: "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip",
+    extra: { androidSdkVersion: 34, osName: "Android", osVersion: "14", platform: "MOBILE" },
+    key: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+  },
+  IOS: {
+    name: "IOS", id: "5", version: "20.10.4",
+    ua: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3 like Mac OS X)",
+    extra: { osName: "iPhone", osVersion: "18.3.18D70", deviceMake: "Apple", deviceModel: "iPhone16,2" },
+    key: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+  },
+};
+
+// ترتیب تلاش برای player: هر کلاینت روی مجموعه متفاوتی از ویدیوها OK می‌دهد
+const PLAYER_CLIENTS = ["VR", "ANDROID", "IOS", "WEB"];
+
+async function innerTube(endpoint, body, clientKey) {
+  const c = CLIENTS[clientKey];
+  const client = {
+    hl: "en", gl: "US",
+    clientName: c.name, clientVersion: c.version,
+    visitorData: VISITOR,
+    ...(c.extra || {}),
+  };
+  const res = await fetch(`https://www.youtube.com/youtubei/v1/${endpoint}?key=${c.key}&prettyPrint=false`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": c.ua,
+      "Origin": "https://www.youtube.com",
+      "Referer": "https://www.youtube.com/",
+      "X-YouTube-Client-Name": c.id,
+      "X-YouTube-Client-Version": c.version,
+      "Accept-Language": "en-US,en;q=0.9",
+      // کوکی حساب یوتیوب (اختیاری، فقط روی Worker خودت به‌صورت secret تنظیم می‌شود)
+      ...(YT_COOKIE ? { "Cookie": YT_COOKIE } : {}),
+    },
+    body: JSON.stringify({ context: { client }, ...body }),
+  });
+  if (!res.ok) throw new Error("YouTube API " + res.status);
+  return res.json();
+}
+let YT_COOKIE = "";
+
+// ─── کش پاسخ player ───
+// لایهٔ ۱: کش مشترک KV — یک fetch برای همهٔ کاربرها (کلیدها بر اساس colo تفکیک می‌شوند)
+// لایهٔ ۲: کش حافظهٔ ایزوله
+let KV = null; // در wrangler.toml تعریف می‌شود (اختیاری)
+const playerCache = new Map();
+const PLAYER_TTL = 240 * 1000;
+
+async function getPlayer(videoId, noCache = false, force = false, colo = "?") {
+  const kvKey = "p:" + colo + ":" + videoId;
+  // ۱. کش مشترک — با یک fetch، همهٔ کاربرهای این colo سرویس می‌گیرند
+  if (KV && !force && !noCache) {
+    try {
+      const hit = await KV.get(kvKey, { type: "json" });
+      if (hit) {
+        playerCache.set(videoId, { ts: Date.now(), data: hit, ttl: PLAYER_TTL });
+        if (playerCache.size > 200) playerCache.delete(playerCache.keys().next().value);
+        return hit;
+      }
+    } catch (e) { /* خطای KV — ادامه می‌دهیم */ }
+  }
+  // ۲. کش حافظهٔ ایزوله
+  if (!noCache && !force) {
+    const hit = playerCache.get(videoId);
+    if (hit && Date.now() - hit.ts < (hit.ttl || PLAYER_TTL)) return hit.data;
+  }
+  // ۳. گرفتن از YouTube — سه پاس با مکث بینشان: بررسی «ربات» یوتیوب احتمالاتی است
+  let data = null, lastBad = null, lastErr = null, okClient = null;
+  const delays = [0, 1200, 2500];
+  for (let pass = 0; pass < delays.length && !data; pass++) {
+    if (delays[pass]) await new Promise(r => setTimeout(r, delays[pass])); // مکث کوتاه قبل از پاس بعدی
+    for (const ck of PLAYER_CLIENTS) {
+      try {
+        const d = await innerTube("player", { videoId }, ck);
+        const st = d && d.playabilityStatus && d.playabilityStatus.status;
+        if (st === "OK") { data = d; okClient = ck; break; }
+        lastBad = d;
+      } catch (e) { lastErr = e; }
+    }
+  }
+  const out = data || lastBad;
+  if (!out) throw (lastErr || new Error("player failed"));
+  if (okClient) out.__client = okClient; // برای UA درست در استریم
+  // نتیجه منفی (bot-check) کوتاه‌مدت کش شود تا کاربر بتواند زودتر دوباره امتحان کند
+  const ttl = data ? PLAYER_TTL : 60 * 1000;
+  playerCache.set(videoId, { ts: Date.now(), data: out, ttl });
+  if (playerCache.size > 200) playerCache.delete(playerCache.keys().next().value);
+  // ۴. نوشتن در کش مشترک — بقیهٔ کاربرها هم با همان نتیجه سرویس می‌گیرند
+  if (KV) {
+    try {
+      await KV.put(kvKey, JSON.stringify(out), { expirationTtl: Math.max(60, Math.round(ttl / 1000)) });
+    } catch (e) { /* بیخیال — کش حافظه کار را انجام می‌دهد */ }
+  }
+  return out;
+}
+
+function findFormat(player, itag) {
+  const sd = player && player.streamingData;
+  if (!sd) return null;
+  const all = [...(sd.formats || []), ...(sd.adaptiveFormats || [])];
+  return all.find(f => String(f.itag) === String(itag) && f.url) || null;
+}
+
+function allFormats(player) {
+  const sd = (player && player.streamingData) || {};
+  const progressive = (sd.formats || []).filter(f => f.url)
+    .sort((a, b) => (b.height || 0) - (a.height || 0));
+  const adaptive = (sd.adaptiveFormats || []).filter(f => f.url);
+  const audio = adaptive.filter(f => /audio/.test(f.mimeType || ""))
+    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+  const videoOnly = adaptive.filter(f => /video/.test(f.mimeType || ""))
+    .sort((a, b) => {
+      const pa = /video\/mp4/.test(a.mimeType || "") ? 0 : 1;
+      const pb = /video\/mp4/.test(b.mimeType || "") ? 0 : 1;
+      if (pa !== pb) return pa - pb; // mp4 اول (سازگاری با Safari)
+      return (b.height || 0) - (a.height || 0);
+    });
+  return { progressive, audio, videoOnly };
+}
+
+// ─── استریم ویدیو/صدا از googlevideo با پشتیبانی Range ───
+async function fetchGooglevideo(target, request, clientKey) {
+  const headers = new Headers();
+  const range = request.headers.get("range");
+  if (range) headers.set("Range", range);
+  const c = CLIENTS[clientKey] || CLIENTS.VR;
+  headers.set("User-Agent", c.ua);
+  headers.set("Referer", "https://www.youtube.com/");
+  try {
+    return await fetch(target, { headers, redirect: "follow" });
+  } catch (e) {
+    return null;
+  }
+}
+
+async function handleStream(request, url) {
+  const v = url.searchParams.get("v");
+  const itag = url.searchParams.get("itag");
+  const download = url.searchParams.get("download") === "1";
+  if (!v || !itag) return htmlPage("خطا", "<p class='center'>پارامتر ناقص است.</p>", 400);
+  const colo = (request.cf && request.cf.colo) || "?";
+
+  let player = await getPlayer(v, false, false, colo);
+  let fmt = findFormat(player, itag);
+  let res = fmt ? await fetchGooglevideo(fmt.url, request, player.__client) : null;
+
+  // اگر 403 شد (URL منقضی یا نتیجهٔ کشِ coloی دیگر)، یک بار تازه از همین colo می‌گیریم
+  if (!res || res.status === 403) {
+    player = await getPlayer(v, true, true, colo);
+    fmt = findFormat(player, itag);
+    res = fmt ? await fetchGooglevideo(fmt.url, request, player.__client) : null;
+  }
+  const psS = player.playabilityStatus || {};
+  if (psS.status && psS.status !== "OK") return lockedPage(v, itag, psS.reason || psS.status);
+  if (!fmt) return htmlPage("استریم پیدا نشد", "<p class='center'>این کیفیت برای این ویدیو موجود نیست. <a href='/watch?v=" + encodeURIComponent(v) + "'>بازگشت به ویدیو</a></p>", 404);
+  if (!res) return htmlPage("خطای استریم", "<p class='center'>خطا در دریافت استریم از YouTube — <a href='#' onclick='location.reload();return false'>دوباره امتحان کن</a></p>", 502);
+
+  const headers = new Headers();
+  for (const h of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+    const val = res.headers.get(h);
+    if (val) headers.set(h, val);
+  }
+  headers.set("cache-control", "no-store");
+  headers.set("access-control-allow-origin", "*");
+  if (download) {
+    const ext = mimeExt(fmt.mimeType);
+    const name = ((player.videoDetails && player.videoDetails.title) || v) + "_" + itag + ext;
+    headers.set("content-disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(name));
+  }
+  return new Response(res.body, { status: res.status, headers });
+}
+
+// ─── پروکسی تصاویر (فقط ytimg / ggpht) ───
+async function handleImg(url) {
+  const u = url.searchParams.get("u");
+  if (!u) return new Response("", { status: 400 });
+  let target;
+  try { target = new URL(u); } catch (e) { return new Response("", { status: 400 }); }
+  if (!/(\.|^)ytimg\.com$/.test(target.hostname) && !/(\.|^)ggpht\.com$/.test(target.hostname)) {
+    return new Response("", { status: 403 });
+  }
+  try {
+    const res = await fetch(target.toString(), {
+      headers: { "User-Agent": CLIENTS.WEB.ua, "Referer": "https://www.youtube.com/" },
+    });
+    const headers = new Headers();
+    headers.set("content-type", res.headers.get("content-type") || "image/jpeg");
+    headers.set("cache-control", "public, max-age=86400");
+    headers.set("access-control-allow-origin", "*");
+    return new Response(res.body, { status: res.status, headers });
+  } catch (e) {
+    return new Response("", { status: 502 });
+  }
+}
+
+// ─── جستجو ───
+function chId(v) {
+  let id = "";
+  walk(v.ownerText || v.longBylineText || {}, (o) => {
+    const b = o && o.browseId;
+    if (!id && typeof b === "string" && /^UC/.test(b)) id = b;
+  });
+  return id;
+}
+
+// ─── صفحهٔ کانال: ویدیوهای کانال ───
+async function handleChannel(url) {
+  const tab = (url.searchParams.get("tab") || "").trim();
+  const id = (url.searchParams.get("id") || "").trim();
+  if (!/^UC[\w-]{10,}$/.test(id)) return Response.redirect(new URL("/", url), 302);
+  let data;
+  try {
+    data = await innerTube("browse", tab ? { browseId: id, params: tab } : { browseId: id }, "WEB");
+  } catch (e) {
+    return htmlPage("خطا", `<p class='center'>خطا در باز کردن کانال: ${esc(e.message)} — <a href='/'>خانه</a></p>`, 502);
+  }
+  const name = ((data.metadata || {}).channelMetadataRenderer || {}).title || ((data.header || {}).c4TabbedHeaderRenderer || {}).title || "کانال";
+  const vids = [];
+  const seen = new Set();
+  // صفحهٔ کانال: دو قالب ممکن است — videoRenderer قدیمی یا lockupViewModel جدید
+  const items = [];
+  walk(data, (o) => {
+    if (o && o.videoRenderer && o.videoRenderer.videoId && !seen.has(o.videoRenderer.videoId)) {
+      seen.add(o.videoRenderer.videoId); items.push({ id: o.videoRenderer.videoId, title: vTitle(o.videoRenderer), sub: vViews(o.videoRenderer), dur: vDuration(o.videoRenderer), th: vThumb(o.videoRenderer) });
+    }
+    if (o && o.shortsLockupViewModel) {
+      const sv = o.shortsLockupViewModel;
+      const sid = (((sv.onTap || {}).innertubeCommand || {}).reelWatchEndpoint || {}).videoId;
+      if (sid && !seen.has(sid)) {
+        seen.add(sid);
+        items.push({ id: sid, title: ((sv.overlayMetadata || {}).primaryText || {}).content || "", sub: "", dur: "", th: "" });
+      }
+    }
+    if (o && o.lockupViewModel && o.lockupViewModel.contentId && !seen.has(o.lockupViewModel.contentId)) {
+      const lv = o.lockupViewModel;
+      if (lv.contentType && !/VIDEO/.test(lv.contentType)) return;
+      const lm = (((lv.metadata || {}).lockupMetadataViewModel) || {});
+      const title = ((lm.title || {}).content) || "";
+      seen.add(lv.contentId);
+      items.push({ id: lv.contentId, title, sub: "", dur: "", th: "" });
+    }
+  });
+  const rows = items.slice(0, 40).map(v => {
+    return `<a class="vrow" href="/watch?v=${encodeURIComponent(v.id)}">
+      <img src="${v.th ? "/img?u=" + encodeURIComponent(v.th) : "https://i.ytimg.com/vi/" + encodeURIComponent(v.id) + "/hqdefault.jpg"}" alt="" loading="lazy">
+      <div class="vmeta">
+        <span class="vtitle">${esc(v.title)}</span>
+        <div class="vsub">${v.dur ? `<span class="badge">${esc(v.dur)}</span>` : ""}${v.sub ? ` · ${esc(v.sub)}` : ""}</div>
+      </div>
+    </a>`;
+  }).join("");
+  const tabsRoot = ((data.contents || {}).twoColumnBrowseResultsRenderer || {}).tabs || [];
+  const tabsList = [];
+  tabsRoot.forEach(t => { const r = t.tabRenderer; if (!r) return; const pp = ((r.endpoint || {}).browseEndpoint || {}).params; if (pp) tabsList.push({ title: r.title, p: pp }); });
+  const tabsBar = tabsList.length ? '<div class="chips">' + tabsList.map(x => '<a class="chip' + (x.p === tab ? ' on' : '') + '" href="/channel?id=' + encodeURIComponent(id) + '&tab=' + encodeURIComponent(x.p) + '">' + esc(x.title) + '</a>').join("") + '</div>' : "";
+  return htmlPage(String(name), `
+    <h2 style="margin:18px 0 10px;font-size:20px">${esc(String(name))}</h2>
+    ${tabsBar}
+    ${items.length ? `<div class="vlist">${rows}</div>` : `<p class="note">ویدیویی برای این کانال پیدا نشد.</p>`}
+  `);
+}
+
+async function handleSearch(url) {
+  const q = (url.searchParams.get("q") || "").trim();
+  if (!q) return Response.redirect(new URL("/", url), 302);
+  let data;
+  try {
+    data = await innerTube("search", { query: q }, "WEB");
+  } catch (e) {
+    return htmlPage("خطا", `<p class='center'>خطا در جستجو: ${esc(e.message)} — <a href='/'>تلاش دوباره</a></p>`, 502);
+  }
+  const vids = [];
+  const seen = new Set();
+  walk(data, (o) => {
+    if (o && o.videoRenderer && o.videoRenderer.videoId && !seen.has(o.videoRenderer.videoId)) {
+      seen.add(o.videoRenderer.videoId);
+      vids.push(o.videoRenderer);
+    }
+  });
+  const rows = vids.slice(0, 25).map(v => {
+    const id = v.videoId;
+    const t = vTitle(v), ch = vChannel(v), dur = vDuration(v), views = vViews(v), th = vThumb(v);
+    return `<a class="vrow" href="/watch?v=${encodeURIComponent(id)}">
+      <img src="/img?u=${encodeURIComponent(th)}" alt="" loading="lazy">
+      <div class="vmeta">
+        <span class="vtitle">${esc(t)}</span>
+        <div class="vsub">${chId(v) ? `<a href="/channel?id=${encodeURIComponent(chId(v))}" style="color:#aaa">${esc(ch)}</a>` : esc(ch)}${dur ? ` · <span class="badge">${esc(dur)}</span>` : ""}${views ? ` · ${esc(views)}` : ""}</div>
+      </div>
+    </a>`;
+  }).join("");
+
+  const rowsData = vids.slice(0, 60).map(v => [
+    v.videoId, vTitle(v) || "", vChannel(v) || "", chId(v) || "", vDuration(v) || "", vViews(v) || ""
+  ]);
+  const safeJson = (x) => JSON.stringify(x).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+  const html = SEARCH_HTML
+    .replace("__DATA__", () => safeJson(rowsData))
+    .replace(/__Q__/g, () => esc(q));
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+async function handleSearchOld(q, rows) {
+  return htmlPage("جستجو: " + q, `
+    <h2 style="margin:18px 0 10px;font-size:20px">نتایج جستجو برای «${esc(q)}»</h2>
+    ${vids.length ? `<div class="vlist">${rows}</div>` : `<p class="note">نتیجه‌ای پیدا نشد. عبارت دیگری را امتحان کنید.</p>`}
+  `);
+}
+
+// ─── صفحهٔ خطای «قفل ربات» — با تلاش خودکار ───
+function lockedPage(v, itag, reason) {
+  const base = `/watch?v=${encodeURIComponent(v)}${itag ? "&itag=" + encodeURIComponent(itag) : ""}`;
+  const freshHref = base + "&fresh=1"; // تلاش خودکار: کش حافظه رد می‌شود، کش مشترک نه
+  const forceHref = base + "&force=1"; // دکمهٔ دستی: یک تلاش کاملاً تازه
+  return htmlPage("قابل پخش نیست", `
+    <div class='center' style='padding-top:40px'>
+      <div style='font-size:46px'>🤖</div>
+      <h1 style='font-size:19px;margin:10px 0 4px'>این ویدیو فعلاً توسط YouTube قفل شده</h1>
+      <p class='note' style='max-width:460px;margin:8px auto 0;line-height:2'>
+        یوتیوب برای این ویدیو تأیید «ربات نبودن» می‌خواهد (<b>${esc(reason)}</b>).<br>
+        این قفل <b>موقت</b> است و معمولاً ظرف ۱ تا ۲ دقیقه باز می‌شود.<br>
+        صفحه <b>خودکار</b> چند بار دیگر با فاصله امتحان می‌کند — لازم نیست کاری بکنید. 🙂
+      </p>
+      <p class='note' style='max-width:460px;margin:10px auto 0;line-height:2;color:#8ab4f8'>
+        💡 نکته: اگر VPN (فیلترشکن) روشن باشد، شانس پخش بیشتر است — چون درخواست از سرور دیگری به یوتیوب می‌رسد.
+      </p>
+      <p class='note' id='autoNote' style='color:#ff6b7a;margin-top:14px'>تلاش خودکار بعدی تا <b id='cnt'>۲۰</b> ثانیهٔ دیگر… (تلاش <b id='att'>۱</b> از ۴)</p>
+      <p style='margin:26px 0 10px'><a class='btn' href='${forceHref}'>🔄 تلاش مجدد دستی</a></p>
+      <p class='note'><a href='/'>← بازگشت به خانه</a></p>
+    </div>
+    <script>
+      (function(){
+        var auto = parseInt(new URLSearchParams(location.search).get('auto') || '0', 10);
+        var waits = [20, 40, 60, 90]; // فاصله‌های فزاینده — قفل یوتیوب معمولاً ۱ تا ۲ دقیقه طول می‌کشد
+        var note = document.getElementById('autoNote');
+        if (auto >= waits.length) {
+          if (note) note.textContent = 'هنوز نشد — لطفاً ۱ تا ۲ دقیقه صبر کنید و دوباره امتحان کنید.';
+          return;
+        }
+        var s = waits[auto], el = document.getElementById('cnt'), at = document.getElementById('att');
+        if (at) at.textContent = auto + 1;
+        var t = setInterval(function(){
+          s--; if (el) el.textContent = s;
+          if (s <= 0) { clearInterval(t); location.href = ${JSON.stringify(freshHref)} + '&auto=' + (auto + 1); }
+        }, 1000);
+      })();
+    </script>
+  `, 200);
+}
+
+// ─── انتظار روی سرور برای باز شدن قفل ───
+// چند تلاش با فاصله، داخل همان درخواست؛ کاربر فقط یک بار صفحه را باز می‌کند
+// (محدودیت Workers: تعداد subrequest محدود است، پس فقط چند تلاش کم)
+async function waitForUnlock(v, colo, player) {
+  const waits = [15000, 25000]; // ms
+  for (const ms of waits) {
+    await new Promise(r => setTimeout(r, ms));
+    try {
+      const p = await getPlayer(v, true, true, colo);
+      if (p.playabilityStatus && p.playabilityStatus.status === "OK") return p;
+      player = p;
+    } catch (e) { /* ادامه */ }
+  }
+  return player;
+}
+
+
+function subsUI(vidExpr) {
+  // نوار زیرنویس فارسی زیر پخش‌کننده (نیازی به منوی CC مرورگر نیست)
+  return `
+    <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
+      <button id="subbtn" class="chip" type="button" style="cursor:pointer">زیرنویس فارسی ○ خاموش</button>
+    </div>
+    <div id="fasub" style="display:none;min-height:44px;text-align:center;font-size:17px;line-height:1.9;color:#fff;background:#141414;border-radius:12px;padding:8px 12px;margin-bottom:10px"></div>
+    <script>
+    (function(){
+      var vEl = document.querySelector('video');
+      var box = document.getElementById('fasub');
+      var btn = document.getElementById('subbtn');
+      var NL = String.fromCharCode(10);
+      var cues = null, cuesFor = '', on = false;
+      function tm(x){ x = x.trim(); var p = x.split(':'); var sec = parseFloat(p.pop()); var mi = parseInt(p.pop() || '0', 10); var h = parseInt(p.pop() || '0', 10); return h*3600 + mi*60 + sec; }
+      function parse(t){
+        var out = [];
+        t.split(NL + NL).forEach(function(b){
+          var lines = b.split(NL), i = 0;
+          for (; i < lines.length; i++) { if (lines[i].indexOf('-->') > -1) break; }
+          if (i >= lines.length) return;
+          var m = lines[i].split('-->');
+          var txt = lines.slice(i+1).join(' ').trim();
+          if (txt) out.push({ s: tm(m[0]), e: tm(m[1]), t: txt });
+        });
+        return out;
+      }
+      function load(){
+        var id = ${vidExpr};
+        if (!id) return;
+        if (cuesFor === id && cues) return;
+        cues = null; cuesFor = id; box.textContent = 'در حال آماده‌سازی زیرنویس…';
+        fetch('/subs?v=' + encodeURIComponent(id)).then(function(r){ return r.text(); }).then(function(t){
+          if (cuesFor !== id) return;
+          cues = parse(t);
+          box.textContent = cues.length ? '' : 'زیرنویسی برای این ویدیو پیدا نشد';
+        }).catch(function(){ if (cuesFor === id) box.textContent = 'خطا در دریافت زیرنویس'; });
+      }
+      btn.onclick = function(){
+        on = !on;
+        btn.textContent = 'زیرنویس فارسی ' + (on ? '● روشن' : '○ خاموش');
+        box.style.display = on ? 'block' : 'none';
+        if (on) load();
+      };
+      if (vEl) vEl.addEventListener('timeupdate', function(){
+        if (!on || !cues) return;
+        var ct = vEl.currentTime, txt = '';
+        for (var i = 0; i < cues.length; i++) { if (ct >= cues[i].s && ct <= cues[i].e) { txt = cues[i].t; break; } }
+        if (box.getAttribute('data-cur') !== txt) { box.setAttribute('data-cur', txt); box.textContent = txt; }
+      });
+      window.__subsLoad = load;
+      window.__subsOn = function(){ return on; };
+    })();
+    </script>`;
+}
+
+
+// ─── تنظیمات ترجمه: URL + کلید + مدل (فقط با توکن مدیر) ───
+let ADMIN_TOKEN = "";
+function settingsForm(token, base, models, model, msg) {
+  const opts = (models || []).map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join("");
+  return htmlPage("تنظیمات ترجمه", `
+    <div class="center" style="padding-top:20px;text-align:right;max-width:560px;margin:0 auto">
+      <h2 style="font-size:20px;margin-bottom:6px">تنظیمات ترجمهٔ زیرنویس</h2>
+      <p class="note">اگه کلید ندی، ترجمه با مدل داخلی Cloudflare انجام می‌شه. کلید فقط توی KV همین Worker خودت ذخیره می‌شه.</p>
+      ${msg ? `<p class="note" style="color:#8ab4f8">${esc(msg)}</p>` : ""}
+      <form method="post" action="/settings" style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+        <label>توکن مدیر<input type="password" name="token" value="${esc(token)}" required></label>
+        <label>آدرس API (مثلاً https://api.openai.com/v1)<input type="text" name="base" value="${esc(base)}"></label>
+        <label>کلید API<input type="password" name="key" placeholder="کلید جدید (خالی = همان قبلی)"></label>
+        <button name="action" value="models" type="submit">دریافت لیست مدل‌ها و پیشنهاد بهترین مدل</button>
+        <label>مدل<select name="model">${opts || `<option value="${esc(model || "")}">${esc(model || "— اول لیست را بگیر —")}</option>`}</select></label>
+        <button name="action" value="save" type="submit">ذخیره</button>
+      </form>
+      <p class="note" style="margin-top:14px"><a href="/">← خانه</a></p>
+    </div>`);
+}
+function pickBestModel(ids) {
+  const prefs = [/gpt-4\.1|gpt-4o|gpt-5/i, /claude-(opus|sonnet)/i, /gemini-.*pro/i, /deepseek-(v|r)\d/i, /qwen|llama|mistral/i];
+  for (const re of prefs) { const hit = ids.find(x => re.test(x)); if (hit) return hit; }
+  return ids[0] || "";
+}
+async function handleSettings(request, url) {
+  if (!ADMIN_TOKEN) return htmlPage("تنظیمات", "<p class='center'>ابتدا ADMIN_TOKEN را به‌عنوان Secret تنظیم کن.</p>", 503);
+  if (!KV) return htmlPage("تنظیمات", "<p class='center'>کش KV تنظیم نشده است.</p>", 503);
+  const f = {};
+  if (request.method === "POST") { const fd = await request.formData(); fd.forEach((v, k) => { f[k] = String(v); }); }
+  else { url.searchParams.forEach((v, k) => { f[k] = v; }); }
+  const token = (f.token || "").trim();
+  if (!token) return settingsForm("", "", [], "", "");
+  if (token !== ADMIN_TOKEN) return settingsForm("", "", [], "", "توکن اشتباه است");
+  const cur = (await getAICfg()) || {};
+  const base = (f.base || cur.base || "").trim();
+  const key = (f.key || "").trim() || cur.key || "";
+  if (f.action === "save") {
+    const model = (f.model || "").trim();
+    await KV.put("cfg:ai", JSON.stringify({ base: normBase(base), key, model }));
+    return settingsForm(token, base, model ? [model] : [], model, "ذخیره شد ✅");
+  }
+  if (f.action === "models") {
+    try {
+      const r = await fetch(normBase(base) + "/models", { headers: { "Authorization": "Bearer " + key } });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      const ids = ((j.data || j.models || [])).map(x => String(x.id || x.name || "")).filter(Boolean);
+      const best = pickBestModel(ids);
+      return settingsForm(token, base, ids, best, "پیشنهاد: " + best + " — اگه خواستی عوضش کن و ذخیره کن");
+    } catch (e) {
+      return settingsForm(token, base, [], "", "دریافت مدل‌ها ناموفق بود: " + e.message);
+    }
+  }
+  return settingsForm(token, base, [], cur.model || "", "");
+}
+
+// ─── صفحه تماشا ───
+// صفحهٔ پوسته: فوراً باز می‌شود و بعد صفحهٔ واقعی ویدیو را می‌گیرد (تا وقتی سرور منتظر قفل است، صفحه خالی نمی‌ماند)
+function watchShell(url) {
+  const qs = url.search ? url.search + "&raw=1" : "?raw=1";
+  return new Response(`<!DOCTYPE html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>در حال باز کردن — یوتیوب لایت</title>
+<style>
+body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Tahoma,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px}
+.spin{width:44px;height:44px;border:4px solid #333;border-top-color:#ff0033;border-radius:50%;animation:s 0.9s linear infinite;margin-bottom:18px}
+@keyframes s{to{transform:rotate(360deg)}}
+a{color:#ff4d5e}
+.qnav{display:flex;gap:8px;overflow-x:auto;padding:8px 16px;border-bottom:1px solid #272727;background:#0f0f0f}
+.qnav a{white-space:nowrap;background:#1f1f1f;border:1px solid #333;border-radius:20px;padding:6px 14px;color:#ddd;font-size:13px}
+.qnav a:hover{border-color:#ff0033;color:#fff;text-decoration:none}
+</style></head><body>
+<div class="spin"></div>
+<div id="m">در حال باز کردن ویدیو…</div>
+<script>
+(function(){
+  fetch(location.pathname + ${JSON.stringify(qs)})
+    .then(function(r){ return r.text(); })
+    .then(function(t){ document.open(); document.write(t); document.close(); })
+    .catch(function(){ document.getElementById('m').innerHTML = 'اتصال کند شد. <a href="' + location.href + '">دوباره امتحان کن</a>'; });
+})();
+</script>
+</body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function handleWatch(request, url) {
+  const v = url.searchParams.get("v");
+  if (!v) return Response.redirect(new URL("/", url), 302);
+  if (url.searchParams.get("raw") !== "1") return watchShell(url);
+  const itag = url.searchParams.get("itag");
+  const fresh = url.searchParams.get("fresh") === "1"; // تلاش خودکار: کش حافظه رد می‌شود، کش مشترک نه
+  const force = url.searchParams.get("force") === "1"; // دکمهٔ دستی: یک تلاشِ کاملاً تازه
+  const colo = (request.cf && request.cf.colo) || "?";
+  let player;
+  try {
+    player = await getPlayer(v, fresh, force, colo);
+    // اگر قفل بود، همین‌جا روی سرور چند بار با فاصله امتحان کن (کاربر لازم نیست دستی بزند)
+    if (player.playabilityStatus && player.playabilityStatus.status !== "OK") {
+      player = await waitForUnlock(v, colo, player);
+    }
+  } catch (e) {
+    return htmlPage("خطا", `<p class='center'>خطا در دریافت اطلاعات ویدیو: ${esc(e.message)} — <a href='/'>خانه</a></p>`, 502);
+  }
+  const ps = player.playabilityStatus || {};
+  const vd = player.videoDetails || {};
+  if (ps.status && ps.status !== "OK") return lockedPage(v, itag, ps.reason || ps.status);
+  const lists = allFormats(player);
+  const pool = [...lists.progressive, ...lists.audio, ...lists.videoOnly];
+  const active = (itag && pool.find(f => String(f.itag) === itag)) || lists.progressive[0] || lists.audio[0] || lists.videoOnly[0];
+  if (!active) {
+    return htmlPage("استریم موجود نیست", `<p class='center'>هیچ استریمی برای این ویدیو پیدا نشد. — <a href='/'>خانه</a></p>`, 200);
+  }
+
+  const chipList = [
+    ...lists.progressive.map(f => ({ f, kind: "av" })),
+    ...lists.audio.slice(0, 2).map(f => ({ f, kind: "audio" })),
+    ...lists.videoOnly.slice(0, 4).map(f => ({ f, kind: "vo" })),
+  ];
+  const chips = chipList.map(({ f, kind }) => {
+    const on = String(f.itag) === String(active.itag) ? " on" : "";
+    return `<a class="chip${on}" href="/watch?v=${encodeURIComponent(v)}&itag=${f.itag}">${fmtLabel(f, kind)}</a>`;
+  }).join("");
+
+  const dlList = [
+    ...lists.progressive.map(f => ({ f, kind: "av" })),
+    ...lists.audio.map(f => ({ f, kind: "audio" })),
+    ...lists.videoOnly.slice(0, 6).map(f => ({ f, kind: "vo" })),
+  ];
+  const downloads = dlList.map(({ f, kind }) =>
+    `<a class="chip" href="/stream?v=${encodeURIComponent(v)}&itag=${f.itag}&download=1">⬇ ${fmtLabel(f, kind)}</a>`
+  ).join("");
+
+  const thumb = bestThumb(vd.thumbnail);
+  const dur = fmtDuration(vd.lengthSeconds);
+
+  return htmlPage(vd.title || v, `
+    <video controls preload="metadata"${thumb ? ` poster="/img?u=${encodeURIComponent(thumb)}"` : ""} src="/stream?v=${encodeURIComponent(v)}&itag=${active.itag}" onerror="var d=document.getElementById('vfail');if(d)d.style.display='block'">></video>
+    ${subsUI(JSON.stringify(v))}
+    <div id="vfail" style="display:none;text-align:center;padding:26px 10px">
+      <div style="font-size:34px">🤖</div>
+      <p style="margin:8px 0 14px">پخش ویدیو با مشکل مواجه شد — احتمالاً قفل موقتی یوتیوب است یا اتصال استریم قطع شد.</p>
+      <p><a class="btn" href="#" onclick="location.reload();return false">🔄 دوباره امتحان کن</a></p>
+    </div>
+    <h1 style="font-size:20px;margin:14px 0 4px">${esc(vd.title || "")}</h1>
+    <div class="vsub">${esc(vd.author || "")}${dur ? " · " + esc(dur) : ""}</div>
+    <p style="margin:12px 0"><a class="chip" href="/party?v=${encodeURIComponent(v)}">👥 تماشای همزمان با دوست</a></p>
+    <h3 style="margin:18px 0 8px;font-size:15px;color:#aaa">کیفیت پخش</h3>
+    <div class="chips">${chips}</div>
+    <h3 style="margin:18px 0 8px;font-size:15px;color:#aaa">دانلود مستقیم</h3>
+    <div class="chips">${downloads}</div>
+    <p class="note">ویدیو مستقیم از سرورهای YouTube استریم می‌شود. کیفیت‌های «بدون صدا» فقط تصویر دارند؛ برای تماشا با صدا از نسخه 360p استفاده کنید.</p>
+  `);
+}
+
+// ─── صفحه خانه ───
+function homePage() {
+  return htmlPage("خانه", `
+    <div class="center">
+      <div class="big">▶ یوتیوب لایت</div>
+      <div class="sub">تماشای YouTube بدون تبلیغات، بدون صفحه رضایت و بدون ردیابی</div>
+      <form class="search" action="/search" method="get" style="max-width:560px;margin:0 auto">
+        <input type="text" name="q" placeholder="جستجو در YouTube..." autofocus>
+        <button type="submit">جستجو</button>
+      </form>
+      <div class="note" style="margin-top:28px;line-height:2">
+        🔍 جستجوی سریع · ▶ پخش مستقیم ویدیو (پیش‌فرض 360p با صدا)<br>
+        🎧 حالت فقط‌صدا · ⬇ دانلود مستقیم با کیفیت‌های مختلف<br>
+        🚫 بدون تبلیغات · 🚫 بدون ردیابی · 🚫 بدون نیاز به ورود
+      </div>
+    </div>
+  `);
+}
+
+// ─── قالب HTML ───
+function setupPage() {
+  return htmlPage("نصب روی حساب خودت", SETUP_HTML);
+}
+
+function htmlPage(title, body, status = 200) {
+  const html = SHELL_HTML.replace("__TITLE__", () => esc(title) + " — یوتیوب لایت").replace("__BODY__", () => body);
+  return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+// ─── ابزارهای کمکی ───
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function walk(o, fn) {
+  if (!o || typeof o !== "object") return;
+  if (Array.isArray(o)) { for (const v of o) walk(v, fn); return; }
+  fn(o);
+  for (const v of Object.values(o)) walk(v, fn);
+}
+
+function vTitle(v) {
+  const t = v.title || {};
+  return t.simpleText || (t.runs && t.runs[0] && t.runs[0].text) || "";
+}
+function vChannel(v) {
+  const c = v.longBylineText || v.ownerText || {};
+  return c.simpleText || (c.runs && c.runs[0] && c.runs[0].text) || "";
+}
+function vDuration(v) {
+  return (v.lengthText && v.lengthText.simpleText) || "";
+}
+function vViews(v) {
+  const c = v.viewCountText || v.shortViewCountText || {};
+  return c.simpleText || (c.runs && c.runs[0] && c.runs[0].text) || "";
+}
+function vThumb(v) {
+  const arr = v.thumbnail && v.thumbnail.thumbnails;
+  if (!arr || !arr.length) return "";
+  let best = arr[arr.length - 1];
+  for (const t of arr) {
+    if ((t.width || 0) <= 480 && (t.width || 0) >= (best.width || 0)) best = t;
+  }
+  return best.url || "";
+}
+function bestThumb(th) {
+  const arr = th && th.thumbnails;
+  if (!arr || !arr.length) return "";
+  return arr[arr.length - 1].url || "";
+}
+
+function fmtLabel(f, kind) {
+  const q = f.qualityLabel || (f.height ? f.height + "p" : "");
+  if (kind === "audio") return "🎧 فقط صدا" + (q ? " · " + q : "");
+  if (kind === "av") return "▶ " + (q || "پیش‌فرض") + " · تصویر+صدا";
+  return "▶ " + (q || "?") + " · بدون صدا";
+}
+
+function fmtDuration(sec) {
+  sec = parseInt(sec, 10);
+  if (!sec || isNaN(sec)) return "";
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const ss = String(s).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+function mimeExt(mime) {
+  if (/video\/mp4/.test(mime || "")) return ".mp4";
+  if (/video\/webm/.test(mime || "")) return ".webm";
+  if (/audio\/mp4/.test(mime || "")) return ".m4a";
+  if (/audio\/webm/.test(mime || "")) return ".webm";
+  return ".bin";
+}
+
+
+// ═════════════════════════════════════════════════════════════
+// زیرنویس فارسی (ترجمهٔ زنده با Workers AI) — /subs?v=ID
+// ═════════════════════════════════════════════════════════════
+let AI_BIND = null;
+let ROOM_NS = null;
+
+function vttTime(ms) {
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000), x = ms % 1000;
+  const p2 = (n, k = 2) => String(n).padStart(k, "0");
+  return p2(h) + ":" + p2(m) + ":" + p2(s) + "." + p2(x, 3);
+}
+
+function vttResp(body, status = 200) {
+  return new Response(body, { status, headers: {
+    "content-type": "text/vtt; charset=utf-8",
+    "cache-control": "public, max-age=3600",
+    "access-control-allow-origin": "*",
+  } });
+}
+
+async function translateBatch(lines) {
+  // ترجمهٔ داخلی Workers AI (بدون کلید): خط‌ها موازی ترجمه می‌شوند
+  return Promise.all(lines.map(async (line) => {
+    try {
+      const r = await AI_BIND.run("@cf/meta/m2m100-1.2b", { text: line, source_lang: "english", target_lang: "persian" });
+      return (r && r.translated_text) ? String(r.translated_text).trim() : line;
+    } catch (e) { return line; }
+  }));
+}
+
+// ترجمه با مدل دلخواه کاربر (هر سرویس سازگار با OpenAI: URL + کلید + مدل)
+function normBase(u) {
+  return String(u || "").trim().replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+}
+async function getAICfg() {
+  if (!KV) return null;
+  try { return (await KV.get("cfg:ai", { type: "json" })) || null; } catch (e) { return null; }
+}
+async function llmTranslate(cfg, lines) {
+  const sys = "You translate English subtitle lines into natural, short Persian (Farsi). Return ONLY a JSON array of strings with exactly the same number of items, in the same order. No explanations.";
+  const r = await fetch(normBase(cfg.base) + "/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.key },
+    body: JSON.stringify({ model: cfg.model, temperature: 0.2, messages: [
+      { role: "system", content: sys },
+      { role: "user", content: JSON.stringify(lines) },
+    ] }),
+  });
+  if (!r.ok) throw new Error("llm " + r.status);
+  const j = await r.json();
+  const txt = (((j.choices || [])[0] || {}).message || {}).content || "";
+  const m = txt.match(/\[[\s\S]*\]/);
+  const arr = JSON.parse(m ? m[0] : txt);
+  if (!Array.isArray(arr) || arr.length !== lines.length) throw new Error("bad length");
+  return arr.map((x, i) => String(x || lines[i]));
+}
+
+async function handleSubs(url) {
+  const v = (url.searchParams.get("v") || "").trim();
+  if (!/^[\w-]{6,20}$/.test(v)) return vttResp("WEBVTT\n\n", 400);
+  const key = "subfa:" + v;
+  if (KV) {
+    try { const c = await KV.get(key); if (c) return vttResp(c); } catch (e) {}
+  }
+  if (!AI_BIND) return vttResp("WEBVTT\n\n", 503);
+  const player = await getPlayer(v);
+  const tracks = (((player.captions || {}).playerCaptionsTracklistRenderer || {}).captionTracks) || [];
+  if (!tracks.length) return vttResp("WEBVTT\n\n", 404);
+  const t = tracks.find(x => /^en/.test(x.languageCode)) || tracks[0];
+  const r = await fetch(t.baseUrl);
+  if (!r.ok) return vttResp("WEBVTT\n\n", 502);
+  const xml = await r.text();
+  const cues = [];
+  const dec = (x) => x.replace(/<[^>]+>/g, "").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  const re = /<p t="(\d+)" d="(\d+)"[^>]*>([\s\S]*?)<\/p>/g;
+  let m;
+  while ((m = re.exec(xml))) {
+    const text = dec(m[3]);
+    if (!text) continue;
+    const start = parseInt(m[1], 10), dur = parseInt(m[2], 10) || 2500;
+    cues.push({ start, end: start + dur, text });
+  }
+  // سقف برای محدودیت Workers (تعداد درخواست‌ها)
+  const use = cues.slice(0, 240);
+  const cfg = await getAICfg();
+  const useLLM = !!(cfg && cfg.base && cfg.key && cfg.model);
+  const batches = [];
+  for (let i = 0; i < use.length; i += (useLLM ? 30 : 10)) batches.push(use.slice(i, i + (useLLM ? 30 : 10)));
+  const results = await Promise.all(batches.map(async (b) => {
+    const lines = b.map(c => c.text);
+    if (useLLM) { try { return await llmTranslate(cfg, lines); } catch (e) { /* کمکی */ } }
+    try { return await translateBatch(lines); } catch (e) { return lines; }
+  }));
+  const fa = [].concat(...results);
+  let body = "WEBVTT\n\n";
+  use.forEach((c, i) => { body += vttTime(c.start) + " --> " + vttTime(c.end) + "\n" + fa[i] + "\n\n"; });
+  if (KV && use.length) { try { await KV.put(key, body, { expirationTtl: 7 * 24 * 3600 }); } catch (e) {} }
+  return vttResp(body);
+}
+
+// ═════════════════════════════════════════════════════════════
+// تماشای همزمان (watch party) — Durable Object + WebSocket
+// ═════════════════════════════════════════════════════════════
+export class Room {
+  constructor(state) { this.state = state; }
+  async fetch(request) {
+    if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
+    const pair = new WebSocketPair();
+    const client = pair[0], server = pair[1];
+    this.state.acceptWebSocket(server);
+    const st = await this.state.storage.get("st");
+    if (st) server.send(JSON.stringify({ type: "state", ...st }));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  async webSocketMessage(ws, msg) {
+    let m;
+    try { m = JSON.parse(msg); } catch (e) { return; }
+    if (m.type !== "state") return;
+    const st = {
+      v: String(m.v || "").slice(0, 20),
+      t: Math.max(0, Number(m.t) || 0),
+      playing: !!m.playing,
+      at: Date.now(),
+    };
+    await this.state.storage.put("st", st);
+    const out = JSON.stringify({ type: "state", ...st });
+    for (const c of this.state.getWebSockets()) {
+      if (c !== ws) { try { c.send(out); } catch (e) {} }
+    }
+  }
+  async webSocketClose(ws) { try { ws.close(); } catch (e) {} }
+  async webSocketError(ws) { try { ws.close(); } catch (e) {} }
+}
+
+function partyPage(url) {
+  const v = (url.searchParams.get("v") || "").trim();
+  const room = (url.searchParams.get("room") || "").trim();
+  if (!room) {
+    const id = Math.random().toString(36).slice(2, 10);
+    return Response.redirect(new URL("/party?room=" + id + (v ? "&v=" + encodeURIComponent(v) : ""), url), 302);
+  }
+  const roomName = room.replace(/[^\w-]/g, "").slice(0, 40);
+  return new Response(`<!DOCTYPE html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تماشای همزمان — یوتیوب لایت</title>
+<style>
+body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Tahoma,system-ui,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:14px}
+video{width:100%;aspect-ratio:16/9;background:#000;border-radius:14px}
+input{background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:9px 14px;color:#fff;width:100%;box-sizing:border-box}
+button{background:#ff0033;color:#fff;border:0;border-radius:20px;padding:9px 18px;font-weight:600;cursor:pointer}
+.row{display:flex;gap:8px;margin:12px 0}
+.note{color:#888;font-size:13px;line-height:1.9}
+.status{color:#8ab4f8;font-size:13px}
+a{color:#ff4d5e}
+</style></head><body>
+<div class="wrap">
+  <h2 style="font-size:18px;margin:10px 0">تماشای همزمان — اتاق: <span id="rn"></span></h2>
+  <video id="vid" controls playsinline preload="metadata"></video>
+  ${subsUI("(window.__partyVid || '')")}
+  <div class="row">
+    <input id="vin" type="text" placeholder="لینک یا شناسهٔ ویدیوی یوتیوب">
+    <button id="go">پخش برای همه</button>
+  </div>
+  <p class="status" id="st">در حال اتصال…</p>
+  <p class="note">این لینک را برای دوستت بفرست؛ هر کس وارد شود، پخش همان لحظه برای او هم تنظیم می‌شود.
+  وقتی یکی پخش را مکث یا جلو/عقب کند، برای بقیه هم همان کار انجام می‌شود.
+  زیرنویس فارسی را از دکمهٔ CC پخش‌کننده انتخاب کن.</p>
+  <p class="note"><a href="/">← خانه</a></p>
+</div>
+<script>
+(function(){
+  var ROOM = ${JSON.stringify(roomName)};
+  var vid = document.getElementById('vid'), st = document.getElementById('st');
+  document.getElementById('rn').textContent = ROOM;
+  var cur = ${JSON.stringify(v)};
+  var applying = false, ws = null, retry = 1000;
+
+  function idFrom(s){
+    s = (s || '').trim();
+    var m = s.match(/[?&]v=([\\w-]{6,20})/) || s.match(/youtu\\.be\\/([\\w-]{6,20})/) || s.match(/^([\\w-]{6,20})$/);
+    return m ? m[1] : '';
+  }
+  function setVideo(id, t, playing){
+    if (!id) return;
+    if (id !== cur || !vid.getAttribute('src')) {
+      cur = id; window.__partyVid = id;
+      if (window.__subsOn && window.__subsOn()) setTimeout(function(){ window.__subsLoad(); }, 0);
+      applying = true;
+      vid.src = '/stream?v=' + encodeURIComponent(id) + '&itag=18';
+      vid.load();
+      // زیرنویس فارسی را هم به‌صورت track اضافه کن
+      var old = vid.querySelectorAll('track'); for (var i=0;i<old.length;i++) vid.removeChild(old[i]);
+      vid.onloadedmetadata = function(){ seekAndPlay(t, playing); };
+    } else {
+      seekAndPlay(t, playing);
+    }
+  }
+  function seekAndPlay(t, playing){
+    applying = true;
+    if (Math.abs((vid.currentTime || 0) - t) > 1.5) { try { vid.currentTime = t; } catch(e){} }
+    if (playing) { var p = vid.play(); if (p && p.catch) p.catch(function(){}); } else { vid.pause(); }
+    setTimeout(function(){ applying = false; }, 600);
+  }
+  function send(){
+    if (!ws || ws.readyState !== 1 || applying) return;
+    ws.send(JSON.stringify({ type:'state', v: cur, t: vid.currentTime || 0, playing: !vid.paused }));
+  }
+  function connect(){
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    ws = new WebSocket(proto + location.host + '/room/' + encodeURIComponent(ROOM));
+    ws.onopen = function(){ st.textContent = 'متصل شدید ✅'; retry = 1000; };
+    ws.onclose = function(){ st.textContent = 'قطع شد — تلاش مجدد…'; setTimeout(connect, retry); retry = Math.min(retry*2, 10000); };
+    ws.onmessage = function(e){
+      var m; try { m = JSON.parse(e.data); } catch(x){ return; }
+      if (m.type !== 'state' || !m.v) return;
+      var t = m.t || 0;
+      if (m.playing) { t += Math.max(0, (Date.now() - m.at) / 1000); }
+      setVideo(m.v, t, m.playing);
+    };
+  }
+  vid.addEventListener('play', send);
+  vid.addEventListener('pause', send);
+  vid.addEventListener('seeked', function(){ setTimeout(send, 50); });
+  document.getElementById('go').addEventListener('click', function(){
+    var id = idFrom(document.getElementById('vin').value);
+    if (!id) { st.textContent = 'شناسهٔ معتبر نیست'; return; }
+    setVideo(id, 0, false);
+    applying = false;
+    send();
+  });
+  if (cur) { setVideo(cur, 0, false); }
+  connect();
+})();
+</script>
+</body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+export default {
+  async fetch(request, env) {
+    if (env && env.YT_CACHE) KV = env.YT_CACHE; // کش مشترک (KV)
+    if (env && env.YT_COOKIE) YT_COOKIE = env.YT_COOKIE; // کوکی حساب (secret)
+    if (env && env.AI) AI_BIND = env.AI;
+    if (env && env.ADMIN_TOKEN) ADMIN_TOKEN = env.ADMIN_TOKEN;
+    if (env && env.ROOM) ROOM_NS = env.ROOM;
+    const url = new URL(request.url);
+    try {
+      if (url.pathname === "/") return homePage();
+      if (url.pathname === "/search") return handleSearch(url);
+      if (url.pathname === "/channel") return handleChannel(url);
+      if (url.pathname === "/subs") return handleSubs(url);
+      if (url.pathname === "/settings") return handleSettings(request, url);
+      if (url.pathname === "/setup") return setupPage();
+      if (url.pathname === "/party") return partyPage(url);
+      if (url.pathname.startsWith("/room/")) {
+        if (!ROOM_NS) return new Response("room service not configured", { status: 503 });
+        const name = decodeURIComponent(url.pathname.slice(6)).replace(/[^\w-]/g, "").slice(0, 40);
+        return ROOM_NS.get(ROOM_NS.idFromName(name)).fetch(request);
+      }
+      if (url.pathname === "/watch") return handleWatch(request, url);
+      if (url.pathname === "/stream") return handleStream(request, url);
+      if (url.pathname === "/img") return handleImg(url);
+      return htmlPage("پیدا نشد", "<p class='center'>صفحه پیدا نشد. <a href='/'>خانه</a></p>", 404);
+    } catch (e) {
+      return htmlPage("خطا", `<p class='center'>خطایی رخ داد: ${esc(e.message)} — <a href='/'>خانه</a></p>`, 500);
+    }
+  },
+};

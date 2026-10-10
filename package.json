@@ -1,0 +1,13 @@
+{
+  "name": "yt-lite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YouTube Lite — یک فرانت‌اند سبک YouTube روی Cloudflare Workers (بدون تبلیغات و ردیابی)",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "3.78.0"
+  }
+}
