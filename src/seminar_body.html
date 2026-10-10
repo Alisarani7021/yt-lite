@@ -1,0 +1,87 @@
+<div class="panel" style="max-width:720px;margin:0 auto;text-align:right">
+  <h2 style="margin-top:4px">سمینار شخصی</h2>
+  <p class="note" style="margin:6px 0 14px">برای هر ویدیو چند سؤال از روی زیرنویس ساخته می‌شه. جواب بده، نقاط ضعفت مشخص می‌شه و برای هر سؤال غلط، زمان دقیق بخش مربوطه نشون داده می‌شه.</p>
+  <div class="row" style="display:flex;gap:8px">
+    <input id="vin" type="text" placeholder="لینک یا شناسهٔ ویدیوی یوتیوب" style="flex:1;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:14px;padding:12px 16px;color:var(--ink)">
+    <button id="go" type="button">ساخت آزمون</button>
+  </div>
+  <p class="note" id="st" style="margin-top:10px"></p>
+  <div id="quiz" style="margin-top:14px"></div>
+  <p class="note" style="margin-top:18px"><a href="/">← بازگشت به خانه</a></p>
+</div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  function idFrom(s){
+    s = (s || '').trim();
+    var m = s.match(/[?&]v=([\w-]{6,20})/) || s.match(/youtu\.be\/([\w-]{6,20})/) || s.match(/^([\w-]{6,20})$/);
+    return m ? m[1] : '';
+  }
+  function fmt(t){ var m = Math.floor(t / 60), s = Math.floor(t % 60); return m + ':' + (s < 10 ? '0' : '') + s; }
+  function load(id){
+    $('st').textContent = 'در حال ساخت آزمون… (اولین بار ممکنه کمی طول بکشه)';
+    $('quiz').innerHTML = '';
+    fetch('/quiz?v=' + encodeURIComponent(id)).then(function(r){
+      return r.json().then(function(j){ return { ok: r.ok, j: j }; });
+    }).then(function(res){
+      if (!res.ok) { $('st').textContent = res.j.error || 'خطا در ساخت آزمون'; return; }
+      $('st').textContent = '';
+      render(id, res.j.questions || []);
+    }).catch(function(){ $('st').textContent = 'اتصال برقرار نشد'; });
+  }
+  function render(id, qs){
+    var box = $('quiz'); box.innerHTML = '';
+    if (!qs.length) { $('st').textContent = 'سؤالی ساخته نشد؛ ویدیوی دیگه‌ای رو امتحان کن.'; return; }
+    var score = 0, answered = 0, wrong = [];
+    qs.forEach(function(q, qi){
+      var card = document.createElement('div');
+      card.className = 'panel'; card.style.margin = '10px 0';
+      var h = document.createElement('div'); h.style.fontWeight = '700'; h.textContent = (qi + 1) + '. ' + q.q;
+      card.appendChild(h);
+      var res = document.createElement('div'); res.className = 'note'; res.style.marginTop = '8px';
+      q.options.forEach(function(opt, oi){
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'chip';
+        b.style.cssText = 'display:block;width:100%;text-align:right;margin:6px 0;cursor:pointer;background:rgba(255,255,255,.05);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font:inherit';
+        b.textContent = opt;
+        b.onclick = function(){
+          if (card.dataset.done) return;
+          card.dataset.done = '1'; answered++;
+          var ok = oi === q.answer;
+          if (ok) score++; else wrong.push(q);
+          b.style.borderColor = ok ? '#7CFC9A' : '#ff6b6b';
+          var kids = card.querySelectorAll('button'); kids[q.answer].style.borderColor = '#7CFC9A';
+          res.innerHTML = '';
+          res.appendChild(document.createTextNode(ok ? 'درست ✅' : 'غلط ❌'));
+          if (typeof q.t === 'number') {
+            res.appendChild(document.createTextNode(' — بخش مربوطه حدود '));
+            var a = document.createElement('a'); a.href = '/watch?v=' + id; a.textContent = fmt(q.t);
+            res.appendChild(a);
+          }
+          if (answered === qs.length) {
+            var sum = document.createElement('div'); sum.className = 'panel'; sum.style.marginTop = '14px';
+            sum.innerHTML = '';
+            var t = document.createElement('b'); t.textContent = 'نتیجه: ' + score + ' از ' + qs.length;
+            sum.appendChild(t);
+            if (wrong.length) {
+              var w = document.createElement('p'); w.className = 'note'; w.style.marginTop = '6px';
+              w.textContent = 'این بخش‌ها رو دوباره ببین: ' + wrong.map(function(x){ return fmt(x.t || 0); }).join('، ');
+              sum.appendChild(w);
+            }
+            box.appendChild(sum);
+          }
+        };
+        card.appendChild(b);
+      });
+      card.appendChild(res);
+      box.appendChild(card);
+    });
+  }
+  $('go').addEventListener('click', function(){
+    var id = idFrom($('vin').value);
+    if (!id) { $('st').textContent = 'شناسهٔ معتبر نیست'; return; }
+    load(id);
+  });
+  var q = new URLSearchParams(location.search).get('v');
+  if (q && idFrom(q)) { $('vin').value = idFrom(q); load(idFrom(q)); }
+})();
+</script>

@@ -1,5 +1,8 @@
 import SEARCH_HTML from "./search.html";
 import SHELL_HTML from "./shell.html";
+import PARTY_TEMPLATE from "./party.html";
+import SEMINAR_BODY from "./seminar_body.html";
+import DUB_BODY from "./dub_body.html";
 import SETUP_HTML from "./setup.html";
 // ─── یوتیوب لایت (YouTube Lite) ───
 // یک فرانت‌اند سبک و مستقل برای YouTube روی Cloudflare Workers
@@ -449,6 +452,90 @@ function subsUI(vidExpr) {
 
 
 
+
+// ─── سمینار شخصی: ساخت آزمون از روی زیرنویس با مدل AI خود کاربر ───
+function fmtClock(sec) {
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
+function buildTranscript(cues) {
+  let out = "";
+  let last = -1;
+  for (const c of cues) {
+    const bucket = Math.floor(c.start / 30000);
+    if (bucket !== last) { out += "\n[" + fmtClock(c.start / 1000) + "] "; last = bucket; }
+    out += c.text + " ";
+    if (out.length > 11000) break;
+  }
+  return out;
+}
+
+async function llmJson(cfg, sys, user) {
+  const r = await fetch(normBase(cfg.base) + "/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.key },
+    body: JSON.stringify({ model: cfg.model, temperature: 0.3, messages: [
+      { role: "system", content: sys },
+      { role: "user", content: user },
+    ] }),
+  });
+  if (!r.ok) throw new Error("llm " + r.status);
+  const j = await r.json();
+  return (((j.choices || [])[0] || {}).message || {}).content || "";
+}
+
+function jsonResp(obj, status = 200) {
+  return new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function handleQuiz(url) {
+  const v = (url.searchParams.get("v") || "").trim();
+  if (!/^[\w-]{6,20}$/.test(v)) return jsonResp({ error: "شناسهٔ ویدیو معتبر نیست" }, 400);
+  const key = "quiz:" + v;
+  if (KV) { try { const c = await KV.get(key, { type: "json" }); if (c) return jsonResp(c); } catch (e) {} }
+  const cfg = await getAICfg();
+  if (!(cfg && cfg.base && cfg.key && cfg.model)) {
+    return jsonResp({ error: "برای ساخت آزمون، اول کلید AI را در /settings ذخیره کن." }, 503);
+  }
+  const got = await getCueList(v);
+  if (got.status || !got.cues || !got.cues.length) return jsonResp({ error: "زیرنویسی برای این ویدیو پیدا نشد." }, 404);
+  const transcript = buildTranscript(got.cues);
+  const sys = "You create multiple-choice comprehension questions from a video transcript. Questions and options must be in Persian. Return ONLY a JSON array of 5 objects, each: {\"q\": string, \"options\": [4 strings], \"answer\": index 0-3 of the correct option, \"t\": the time in seconds of the relevant moment, taken from the [m:ss] markers in the transcript}. Only ask about facts stated in the transcript.";
+  let raw = "";
+  try { raw = await llmJson(cfg, sys, "Transcript:\n" + transcript); }
+  catch (e) { return jsonResp({ error: "مدل AI جواب نداد: " + e.message }, 502); }
+  let arr = [];
+  try { const m = raw.match(/\[[\s\S]*\]/); arr = JSON.parse(m ? m[0] : raw); } catch (e) { arr = []; }
+  const questions = (Array.isArray(arr) ? arr : []).filter(x =>
+    x && typeof x.q === "string" && Array.isArray(x.options) && x.options.length === 4 &&
+    x.options.every(o => typeof o === "string") && Number.isInteger(x.answer) && x.answer >= 0 && x.answer <= 3
+  ).map(x => ({ q: x.q, options: x.options, answer: x.answer, t: typeof x.t === "number" ? Math.max(0, Math.floor(x.t)) : undefined }));
+  if (!questions.length) return jsonResp({ error: "مدل آزمون معتبر نساخت؛ دوباره امتحان کن." }, 502);
+  const out = { questions };
+  if (KV) { try { await KV.put(key, JSON.stringify(out), { expirationTtl: 7 * 24 * 3600 }); } catch (e) {} }
+  return jsonResp(out);
+}
+
+
+// ─── دوبلهٔ فارسی: تبدیل متن به صدا با سرویس AI خود کاربر ───
+async function handleTts(request) {
+  if (request.method !== "POST") return jsonResp({ error: "POST لازم است" }, 405);
+  const cfg = await getAICfg();
+  if (!(cfg && cfg.base && cfg.key)) return jsonResp({ error: "برای دوبله، اول کلید AI را در /settings ذخیره کن." }, 503);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const text = String(body.text || "").replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!text) return jsonResp({ error: "متن خالی است" }, 400);
+  const r = await fetch(normBase(cfg.base) + "/audio/speech", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.key },
+    body: JSON.stringify({ model: cfg.ttsModel || "tts-1", voice: "alloy", input: text, response_format: "mp3" }),
+  });
+  if (!r.ok) return jsonResp({ error: "سرویس صدا جواب نداد (" + r.status + ")" }, 502);
+  return new Response(r.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
+}
+
 // ─── PWA: نصب روی گوشی، اشتراک‌گذاری از اپ یوتیوب، کش آفلاین ───
 const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="110" fill="#06060a"/><rect x="60" y="120" width="392" height="272" rx="60" fill="#ff2d55"/><path d="M215 190v132l110-66z" fill="#fff"/></svg>';
 
@@ -501,7 +588,7 @@ const PWA_HEAD = '<link rel="manifest" href="/manifest.webmanifest"><meta name="
 
 // ─── تنظیمات ترجمه: URL + کلید + مدل (فقط با توکن مدیر) ───
 let ADMIN_TOKEN = "";
-function settingsForm(token, base, models, model, msg) {
+function settingsForm(token, base, models, model, msg, ttsModel) {
   const opts = (models || []).map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join("");
   return htmlPage("تنظیمات ترجمه", `
     <div class="center" style="padding-top:20px;text-align:right;max-width:560px;margin:0 auto">
@@ -513,6 +600,7 @@ function settingsForm(token, base, models, model, msg) {
         <label>آدرس API (مثلاً https://api.openai.com/v1)<input type="text" name="base" value="${esc(base)}"></label>
         <label>کلید API<input type="password" name="key" placeholder="کلید جدید (خالی = همان قبلی)"></label>
         <button name="action" value="models" type="submit">دریافت لیست مدل‌ها و پیشنهاد بهترین مدل</button>
+        <label>مدل صدا (TTS، اختیاری، پیش‌فرض tts-1)<input type="text" name="ttsModel" value="${esc(ttsModel || "")}" placeholder="tts-1"></label>
         <label>مدل<select name="model">${opts || `<option value="${esc(model || "")}">${esc(model || "— اول لیست را بگیر —")}</option>`}</select></label>
         <button name="action" value="save" type="submit">ذخیره</button>
       </form>
@@ -542,8 +630,9 @@ async function handleSettings(request, url) {
   const key = (f.key || "").trim() || cur.key || "";
   if (f.action === "save") {
     const model = (f.model || "").trim();
-    await KV.put("cfg:ai", JSON.stringify({ base: normBase(base), key, model }));
-    return settingsForm(token, base, model ? [model] : [], model, "ذخیره شد ✅");
+    const ttsModel = (f.ttsModel || "").trim();
+    await KV.put("cfg:ai", JSON.stringify({ base: normBase(base), key, model, ttsModel }));
+    return settingsForm(token, base, model ? [model] : [], model, "ذخیره شد ✅", ttsModel);
   }
   if (f.action === "models") {
     try {
@@ -934,136 +1023,93 @@ export class Room {
   constructor(state) { this.state = state; }
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
+    const k = new URL(request.url).searchParams.get("k") || "";
+    let hk = await this.state.storage.get("hostKey");
+    if (!hk && k) { await this.state.storage.put("hostKey", k); hk = k; }
+    const role = (k && hk === k) ? "host" : "viewer";
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
-    this.state.acceptWebSocket(server);
+    this.state.acceptWebSocket(server, [role]);
+    server.send(JSON.stringify({ type: "role", role }));
+    const q = (await this.state.storage.get("q")) || [];
+    server.send(JSON.stringify({ type: "queue", q }));
     const st = await this.state.storage.get("st");
     if (st) server.send(JSON.stringify({ type: "state", ...st }));
     return new Response(null, { status: 101, webSocket: client });
   }
+  roleOf(ws) {
+    const tags = this.state.getTags(ws) || [];
+    return tags.includes("host") ? "host" : "viewer";
+  }
+  async broadcast(obj, except) {
+    const out = JSON.stringify(obj);
+    for (const c of this.state.getWebSockets()) {
+      if (c !== except) { try { c.send(out); } catch (e) {} }
+    }
+  }
   async webSocketMessage(ws, msg) {
     let m;
     try { m = JSON.parse(msg); } catch (e) { return; }
-    if (m.type !== "state") return;
-    const st = {
-      v: String(m.v || "").slice(0, 20),
-      t: Math.max(0, Number(m.t) || 0),
-      playing: !!m.playing,
-      at: Date.now(),
-    };
-    await this.state.storage.put("st", st);
-    const out = JSON.stringify({ type: "state", ...st });
-    for (const c of this.state.getWebSockets()) {
-      if (c !== ws) { try { c.send(out); } catch (e) {} }
+    const isHost = this.roleOf(ws) === "host";
+    const validId = (x) => /^[\w-]{6,20}$/.test(String(x || ""));
+
+    if (m.type === "state") {
+      if (!isHost) { try { ws.send(JSON.stringify({ type: "denied" })); } catch (e) {} return; }
+      if (!validId(m.v)) return;
+      const st = { v: String(m.v), t: Math.max(0, Number(m.t) || 0), playing: !!m.playing, at: Date.now() };
+      await this.state.storage.put("st", st);
+      await this.broadcast({ type: "state", ...st }, ws);
+      return;
+    }
+
+    if (m.type === "queue_add") {
+      if (!validId(m.v)) return;
+      const q = (await this.state.storage.get("q")) || [];
+      if (q.length >= 50) return;
+      q.push(String(m.v));
+      await this.state.storage.put("q", q);
+      await this.broadcast({ type: "queue", q });
+      return;
+    }
+
+    if (m.type === "queue_play" || m.type === "queue_remove") {
+      if (!isHost) { try { ws.send(JSON.stringify({ type: "denied" })); } catch (e) {} return; }
+      const q = (await this.state.storage.get("q")) || [];
+      const i = Number(m.i);
+      if (!Number.isInteger(i) || i < 0 || i >= q.length) return;
+      const [v] = q.splice(i, 1);
+      await this.state.storage.put("q", q);
+      await this.broadcast({ type: "queue", q });
+      if (m.type === "queue_play") {
+        const st = { v, t: 0, playing: true, at: Date.now() };
+        await this.state.storage.put("st", st);
+        await this.broadcast({ type: "state", ...st });
+      }
+      return;
     }
   }
   async webSocketClose(ws) { try { ws.close(); } catch (e) {} }
   async webSocketError(ws) { try { ws.close(); } catch (e) {} }
 }
 
+const PARTY_HTML = PARTY_TEMPLATE;
+
 function partyPage(url) {
   const v = (url.searchParams.get("v") || "").trim();
   const room = (url.searchParams.get("room") || "").trim();
   if (!room) {
     const id = Math.random().toString(36).slice(2, 10);
-    return Response.redirect(new URL("/party?room=" + id + (v ? "&v=" + encodeURIComponent(v) : ""), url), 302);
+    const key = crypto.randomUUID().replace(/-/g, "");
+    const q = (v ? "&v=" + encodeURIComponent(v) : "");
+    return Response.redirect(new URL("/party?room=" + id + "&k=" + key + q, url), 302);
   }
   const roomName = room.replace(/[^\w-]/g, "").slice(0, 40);
-  return new Response(`<!DOCTYPE html>
-<html lang="fa" dir="rtl"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>تماشای همزمان — یوتیوب لایت</title>
-<style>
-body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Tahoma,system-ui,sans-serif}
-.wrap{max-width:920px;margin:0 auto;padding:14px}
-video{width:100%;aspect-ratio:16/9;background:#000;border-radius:14px}
-input{background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:9px 14px;color:#fff;width:100%;box-sizing:border-box}
-button{background:#ff0033;color:#fff;border:0;border-radius:20px;padding:9px 18px;font-weight:600;cursor:pointer}
-.row{display:flex;gap:8px;margin:12px 0}
-.note{color:#888;font-size:13px;line-height:1.9}
-.status{color:#8ab4f8;font-size:13px}
-a{color:#ff4d5e}
-</style></head><body>
-<div class="wrap">
-  <h2 style="font-size:18px;margin:10px 0">تماشای همزمان — اتاق: <span id="rn"></span></h2>
-  <video id="vid" controls playsinline preload="metadata"></video>
-  ${subsUI("(window.__partyVid || '')")}
-  <div class="row">
-    <input id="vin" type="text" placeholder="لینک یا شناسهٔ ویدیوی یوتیوب">
-    <button id="go">پخش برای همه</button>
-  </div>
-  <p class="status" id="st">در حال اتصال…</p>
-  <p class="note">این لینک را برای دوستت بفرست؛ هر کس وارد شود، پخش همان لحظه برای او هم تنظیم می‌شود.
-  وقتی یکی پخش را مکث یا جلو/عقب کند، برای بقیه هم همان کار انجام می‌شود.
-  زیرنویس فارسی را از دکمهٔ CC پخش‌کننده انتخاب کن.</p>
-  <p class="note"><a href="/">← خانه</a></p>
-</div>
-<script>
-(function(){
-  var ROOM = ${JSON.stringify(roomName)};
-  var vid = document.getElementById('vid'), st = document.getElementById('st');
-  document.getElementById('rn').textContent = ROOM;
-  var cur = ${JSON.stringify(v)};
-  var applying = false, ws = null, retry = 1000;
-
-  function idFrom(s){
-    s = (s || '').trim();
-    var m = s.match(/[?&]v=([\\w-]{6,20})/) || s.match(/youtu\\.be\\/([\\w-]{6,20})/) || s.match(/^([\\w-]{6,20})$/);
-    return m ? m[1] : '';
-  }
-  function setVideo(id, t, playing){
-    if (!id) return;
-    if (id !== cur || !vid.getAttribute('src')) {
-      cur = id; window.__partyVid = id;
-      if (window.__subsOn && window.__subsOn()) setTimeout(function(){ window.__subsLoad(); }, 0);
-      applying = true;
-      vid.src = '/stream?v=' + encodeURIComponent(id) + '&itag=18';
-      vid.load();
-      // زیرنویس فارسی را هم به‌صورت track اضافه کن
-      var old = vid.querySelectorAll('track'); for (var i=0;i<old.length;i++) vid.removeChild(old[i]);
-      vid.onloadedmetadata = function(){ seekAndPlay(t, playing); };
-    } else {
-      seekAndPlay(t, playing);
-    }
-  }
-  function seekAndPlay(t, playing){
-    applying = true;
-    if (Math.abs((vid.currentTime || 0) - t) > 1.5) { try { vid.currentTime = t; } catch(e){} }
-    if (playing) { var p = vid.play(); if (p && p.catch) p.catch(function(){}); } else { vid.pause(); }
-    setTimeout(function(){ applying = false; }, 600);
-  }
-  function send(){
-    if (!ws || ws.readyState !== 1 || applying) return;
-    ws.send(JSON.stringify({ type:'state', v: cur, t: vid.currentTime || 0, playing: !vid.paused }));
-  }
-  function connect(){
-    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    ws = new WebSocket(proto + location.host + '/room/' + encodeURIComponent(ROOM));
-    ws.onopen = function(){ st.textContent = 'متصل شدید ✅'; retry = 1000; };
-    ws.onclose = function(){ st.textContent = 'قطع شد — تلاش مجدد…'; setTimeout(connect, retry); retry = Math.min(retry*2, 10000); };
-    ws.onmessage = function(e){
-      var m; try { m = JSON.parse(e.data); } catch(x){ return; }
-      if (m.type !== 'state' || !m.v) return;
-      var t = m.t || 0;
-      if (m.playing) { t += Math.max(0, (Date.now() - m.at) / 1000); }
-      setVideo(m.v, t, m.playing);
-    };
-  }
-  vid.addEventListener('play', send);
-  vid.addEventListener('pause', send);
-  vid.addEventListener('seeked', function(){ setTimeout(send, 50); });
-  document.getElementById('go').addEventListener('click', function(){
-    var id = idFrom(document.getElementById('vin').value);
-    if (!id) { st.textContent = 'شناسهٔ معتبر نیست'; return; }
-    setVideo(id, 0, false);
-    applying = false;
-    send();
-  });
-  if (cur) { setVideo(cur, 0, false); }
-  connect();
-})();
-</script>
-</body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  const vid = /^[\w-]{6,20}$/.test(v) ? v : "";
+  const html = PARTY_HTML
+    .replace("__SUBSUI__", () => subsUI("(window.__partyVid || '')"))
+    .replace("__ROOM__", () => roomName)
+    .replace("__VIDEO__", () => vid);
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
 export default {
@@ -1083,6 +1129,10 @@ export default {
       if (url.pathname === "/sw.js") return swResp();
       if (url.pathname === "/icon.svg") return new Response(ICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
       if (url.pathname === "/share") return handleShare(url);
+      if (url.pathname === "/quiz") return handleQuiz(url);
+      if (url.pathname === "/seminar") return htmlPage("سمینار شخصی", SEMINAR_BODY);
+      if (url.pathname === "/tts") return handleTts(request);
+      if (url.pathname === "/dub") return htmlPage("دوبلهٔ فارسی", DUB_BODY);
       if (url.pathname === "/settings") return handleSettings(request, url);
       if (url.pathname === "/setup") return setupPage();
       if (url.pathname === "/party") return partyPage(url);

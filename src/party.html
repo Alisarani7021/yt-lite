@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تماشای همزمان — یوتیوب لایت</title>
+<style>
+body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Tahoma,system-ui,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:14px}
+video{width:100%;aspect-ratio:16/9;background:#000;border-radius:14px}
+input{background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:9px 14px;color:#fff;width:100%;box-sizing:border-box}
+button{background:#ff0033;color:#fff;border:0;border-radius:20px;padding:9px 18px;font-weight:600;cursor:pointer;white-space:nowrap}
+button.ghost{background:#222;border:1px solid #444}
+.row{display:flex;gap:8px;margin:12px 0;align-items:center}
+.note{color:#888;font-size:13px;line-height:1.9}
+.status{color:#8ab4f8;font-size:13px}
+.badge{display:inline-block;background:#272727;border-radius:8px;padding:2px 10px;font-size:12px;color:#ddd;margin-inline-start:6px}
+.badge.host{background:#ff0033;color:#fff}
+.qitem{display:flex;gap:8px;align-items:center;background:#161616;border-radius:12px;padding:8px 12px;margin:6px 0}
+.qitem a{flex:1;color:#ddd;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+a{color:#ff4d5e}
+</style></head><body>
+<div class="wrap">
+  <h2 style="font-size:18px;margin:10px 0">تماشای همزمان — اتاق: <span id="rn"></span><span class="badge" id="role"></span></h2>
+  <video id="vid" controls playsinline preload="metadata"></video>
+  __SUBSUI__
+  <div class="row" id="hostRow">
+    <input id="vin" type="text" placeholder="لینک یا شناسهٔ ویدیوی یوتیوب">
+    <button id="go">پخش برای همه</button>
+  </div>
+  <div class="row">
+    <input id="qin" type="text" placeholder="ویدیو برای صف (لینک یا شناسه)">
+    <button id="qadd" class="ghost">به صف</button>
+  </div>
+  <div id="queue"></div>
+  <p class="status" id="st">در حال اتصال…</p>
+  <p class="note" id="invite"></p>
+  <p class="note">میزبان کنترل پخش و صف را دارد؛ تماشاچی‌ها می‌توانند ویدیو به صف اضافه کنند. زیرنویس فارسی را از دکمهٔ CC پخش‌کننده انتخاب کن.</p>
+  <p class="note"><a href="/">← خانه</a></p>
+</div>
+<script>
+(function(){
+  var ROOM = "__ROOM__";
+  var params = new URLSearchParams(location.search);
+  var KEY = params.get('k') || localStorage.getItem('ytl-k-' + ROOM) || '';
+  if (params.get('k')) localStorage.setItem('ytl-k-' + ROOM, params.get('k'));
+  var vid = document.getElementById('vid'), st = document.getElementById('st');
+  var $ = function(id){ return document.getElementById(id); };
+  var cur = "__VIDEO__";
+  var applying = false, ws = null, retry = 1000, role = 'viewer', queue = [];
+
+  $('rn').textContent = ROOM;
+  $('invite').textContent = 'لینک دعوت برای دوستت: ' + location.origin + '/party?room=' + ROOM + (cur ? '&v=' + cur : '');
+
+  function idFrom(s){
+    s = (s || '').trim();
+    var m = s.match(/[?&]v=([\w-]{6,20})/) || s.match(/youtu\.be\/([\w-]{6,20})/) || s.match(/^([\w-]{6,20})$/);
+    return m ? m[1] : '';
+  }
+  function setVideo(id, t, playing){
+    if (!id) return;
+    if (id !== cur || !vid.getAttribute('src')) {
+      cur = id; window.__partyVid = id;
+      if (window.__subsOn && window.__subsOn()) setTimeout(function(){ window.__subsLoad(); }, 0);
+      applying = true;
+      vid.src = '/stream?v=' + encodeURIComponent(id) + '&itag=18';
+      vid.load();
+      vid.onloadedmetadata = function(){ seekAndPlay(t, playing); };
+    } else {
+      seekAndPlay(t, playing);
+    }
+  }
+  function seekAndPlay(t, playing){
+    applying = true;
+    if (Math.abs((vid.currentTime || 0) - t) > 1.5) { try { vid.currentTime = t; } catch(e){} }
+    if (playing) { var p = vid.play(); if (p && p.catch) p.catch(function(){}); } else { vid.pause(); }
+    setTimeout(function(){ applying = false; }, 600);
+  }
+  function send(obj){
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify(obj));
+  }
+  function sendState(){
+    if (role !== 'host' || applying) return;
+    send({ type:'state', v: cur, t: vid.currentTime || 0, playing: !vid.paused });
+  }
+  function applyRole(r){
+    role = r;
+    $('role').textContent = r === 'host' ? 'میزبان' : 'تماشاچی';
+    $('role').className = 'badge' + (r === 'host' ? ' host' : '');
+    $('hostRow').style.display = r === 'host' ? 'flex' : 'none';
+    renderQueue();
+  }
+  function renderQueue(){
+    var box = $('queue');
+    box.innerHTML = '';
+    if (!queue.length) { var e = document.createElement('p'); e.className = 'note'; e.textContent = 'صف خالیه.'; box.appendChild(e); return; }
+    queue.forEach(function(v, i){
+      var row = document.createElement('div'); row.className = 'qitem';
+      var a = document.createElement('a'); a.href = '/watch?v=' + v; a.target = '_blank'; a.textContent = (i + 1) + '. ' + v;
+      row.appendChild(a);
+      if (role === 'host') {
+        var b1 = document.createElement('button'); b1.textContent = 'پخش'; b1.onclick = function(){ send({ type:'queue_play', i: i }); };
+        var b2 = document.createElement('button'); b2.className = 'ghost'; b2.textContent = 'حذف'; b2.onclick = function(){ send({ type:'queue_remove', i: i }); };
+        row.appendChild(b1); row.appendChild(b2);
+      }
+      box.appendChild(row);
+    });
+  }
+  function connect(){
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    ws = new WebSocket(proto + location.host + '/room/' + encodeURIComponent(ROOM) + (KEY ? '?k=' + encodeURIComponent(KEY) : ''));
+    ws.onopen = function(){ st.textContent = 'متصل شدید ✅'; retry = 1000; };
+    ws.onclose = function(){ st.textContent = 'قطع شد — تلاش مجدد…'; setTimeout(connect, retry); retry = Math.min(retry * 2, 10000); };
+    ws.onmessage = function(e){
+      var m; try { m = JSON.parse(e.data); } catch(x){ return; }
+      if (m.type === 'role') { applyRole(m.role); return; }
+      if (m.type === 'queue') { queue = m.q || []; renderQueue(); return; }
+      if (m.type === 'denied') { st.textContent = 'فقط میزبان می‌تونه پخش رو کنترل کنه'; return; }
+      if (m.type !== 'state' || !m.v) return;
+      var t = m.t || 0;
+      if (m.playing) { t += Math.max(0, (Date.now() - m.at) / 1000); }
+      setVideo(m.v, t, m.playing);
+    };
+  }
+  vid.addEventListener('play', sendState);
+  vid.addEventListener('pause', sendState);
+  vid.addEventListener('seeked', function(){ setTimeout(sendState, 50); });
+  $('go').addEventListener('click', function(){
+    var id = idFrom($('vin').value);
+    if (!id) { st.textContent = 'شناسهٔ معتبر نیست'; return; }
+    cur = id;
+    send({ type:'state', v: id, t: 0, playing: false });
+    setVideo(id, 0, false);
+  });
+  $('qadd').addEventListener('click', function(){
+    var id = idFrom($('qin').value);
+    if (!id) { st.textContent = 'شناسهٔ صف معتبر نیست'; return; }
+    send({ type:'queue_add', v: id });
+    $('qin').value = '';
+  });
+  if (cur) setVideo(cur, 0, false);
+  applyRole('viewer');
+  connect();
+})();
+</script>
+</body></html>

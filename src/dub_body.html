@@ -1,0 +1,107 @@
+<div class="panel" style="max-width:760px;margin:0 auto;text-align:right">
+  <h2 style="margin-top:4px">دوبلهٔ فارسی</h2>
+  <p class="note" style="margin:6px 0 12px">زیرنویس فارسی هر جمله با صدای سرویس AI خودت خوانده می‌شه و صدای اصلی ویدیو موقع خوانده‌شدن کم می‌شه. برای این قابلیت باید در /settings کلید AI ذخیره کرده باشی.</p>
+  <div class="row" style="display:flex;gap:8px;margin-bottom:12px">
+    <input id="vin" type="text" placeholder="لینک یا شناسهٔ ویدیوی یوتیوب" style="flex:1;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:14px;padding:12px 16px;color:var(--ink)">
+    <button id="load" type="button">باز کن</button>
+  </div>
+  <video id="vid" controls playsinline preload="metadata" style="width:100%;aspect-ratio:16/9;background:#000;border-radius:14px;display:none"></video>
+  <div class="row" style="display:flex;gap:8px;margin:12px 0;align-items:center;flex-wrap:wrap">
+    <button id="dubBtn" type="button" disabled>دوبلهٔ فارسی: خاموش</button>
+    <label class="note" style="display:flex;gap:6px;align-items:center">صدای اصلی وقت دوبله
+      <input id="duck" type="range" min="0" max="1" step="0.05" value="0.2" style="width:120px">
+    </label>
+  </div>
+  <p class="note" id="st"></p>
+  <p class="note" id="now" style="color:#ddd;min-height:1.6em"></p>
+  <p class="note" style="margin-top:18px"><a href="/">← بازگشت به خانه</a></p>
+</div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var vid = $('vid'), st = $('st'), now = $('now'), dubBtn = $('dubBtn');
+  var cues = [], dubOn = false, playingIdx = -1, audio = null, cache = {}, vidId = '';
+  function idFrom(s){
+    s = (s || '').trim();
+    var m = s.match(/[?&]v=([\w-]{6,20})/) || s.match(/youtu\.be\/([\w-]{6,20})/) || s.match(/^([\w-]{6,20})$/);
+    return m ? m[1] : '';
+  }
+  function toSec(s){
+    var p = s.replace(',', '.').split(':'), n = 0;
+    for (var i = 0; i < p.length; i++) n = n * 60 + parseFloat(p[i]);
+    return n;
+  }
+  function parseVtt(txt){
+    var out = [], blocks = txt.split(/\r?\n\r?\n/);
+    blocks.forEach(function(b){
+      var lines = b.split(/\r?\n/), ti = -1;
+      for (var i = 0; i < lines.length; i++) if (lines[i].indexOf('-->') > -1) { ti = i; break; }
+      if (ti < 0) return;
+      var parts = lines[ti].split('-->');
+      var text = lines.slice(ti + 1).join(' ').trim();
+      if (text) out.push({ start: toSec(parts[0].trim()), end: toSec(parts[1].trim()), text: text });
+    });
+    return out;
+  }
+  function clip(i){
+    if (!cues[i]) return Promise.resolve(null);
+    if (!cache[i]) {
+      cache[i] = fetch('/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: cues[i].text }) })
+        .then(function(r){ if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || 'خطا'); }); return r.blob(); })
+        .then(function(b){ return URL.createObjectURL(b); });
+      cache[i].catch(function(){ delete cache[i]; });
+    }
+    return cache[i];
+  }
+  function stopSpeech(){
+    if (audio) { try { audio.pause(); } catch(e){} audio = null; }
+    vid.volume = 1;
+  }
+  function findIdx(t){
+    for (var i = 0; i < cues.length; i++) if (t >= cues[i].start && t < cues[i].end) return i;
+    return -1;
+  }
+  vid.addEventListener('timeupdate', function(){
+    if (!dubOn || vid.paused) return;
+    var i = findIdx(vid.currentTime);
+    if (i < 0 || i === playingIdx) return;
+    playingIdx = i;
+    stopSpeech();
+    now.textContent = cues[i].text;
+    clip(i + 1); // پیش‌خوانی جملهٔ بعد
+    clip(i).then(function(url){
+      if (!url || i !== playingIdx) return;
+      audio = new Audio(url);
+      vid.volume = parseFloat($('duck').value) || 0.2;
+      audio.onended = function(){ vid.volume = 1; };
+      audio.play().catch(function(){});
+    }).catch(function(e){ st.textContent = e.message; dubOn = false; dubBtn.textContent = 'دوبلهٔ فارسی: خاموش'; });
+  });
+  vid.addEventListener('pause', function(){ if (audio) audio.pause(); vid.volume = 1; });
+  vid.addEventListener('play', function(){ if (audio && audio.paused && dubOn) audio.play().catch(function(){}); });
+  vid.addEventListener('seeked', function(){ playingIdx = -1; stopSpeech(); now.textContent = ''; });
+  dubBtn.addEventListener('click', function(){
+    dubOn = !dubOn;
+    dubBtn.textContent = 'دوبلهٔ فارسی: ' + (dubOn ? 'روشن' : 'خاموش');
+    if (!dubOn) { stopSpeech(); now.textContent = ''; }
+    st.textContent = dubOn ? 'دوبله روشنه؛ اگه ویدیو پخش بشه، جمله‌ها خوانده می‌شن.' : '';
+  });
+  $('load').addEventListener('click', function(){
+    var id = idFrom($('vin').value);
+    if (!id) { st.textContent = 'شناسهٔ معتبر نیست'; return; }
+    vidId = id;
+    st.textContent = 'در حال آماده‌سازی زیرنویس فارسی…';
+    vid.style.display = 'block';
+    vid.src = '/stream?v=' + encodeURIComponent(id) + '&itag=18';
+    vid.load();
+    fetch('/subs?v=' + encodeURIComponent(id)).then(function(r){ return r.text(); }).then(function(t){
+      cues = parseVtt(t); cache = {}; playingIdx = -1;
+      if (!cues.length) { st.textContent = 'زیرنویسی برای این ویدیو پیدا نشد؛ دوبله ممکن نیست.'; dubBtn.disabled = true; return; }
+      dubBtn.disabled = false;
+      st.textContent = cues.length + ' جمله آماده شد. دکمهٔ دوبله رو بزن.';
+    }).catch(function(){ st.textContent = 'خطا در گرفتن زیرنویس'; });
+  });
+  var q = new URLSearchParams(location.search).get('v');
+  if (q && idFrom(q)) { $('vin').value = idFrom(q); $('load').click(); }
+})();
+</script>
