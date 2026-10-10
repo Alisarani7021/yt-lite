@@ -19,12 +19,12 @@ npx wrangler kv namespace create YT_CACHE   # id خروجی را در wrangler.t
 npx wrangler deploy
 ```
 
-## تنظیم ترجمهٔ AI (اختیاری)
-بعد از نصب، آدرس `/settings` را باز کن، آدرس API سرویس سازگار با OpenAI، کلید و مدل را وارد کن. توکن مدیر را از Secret با نام `ADMIN_TOKEN` بگذار:
+## تنظیم ترجمهٔ AI (اختیاری ولی توصیه‌شده)
+1. یه رمز تصادفی بساز (حداقل ۱۶ کاراکتر) و جایی یادداشتش کن؛ این «توکن مدیر» توئه.
+2. داشبورد کلودفلر ← Workers & Pages ← ورکرت ← **Settings** ← **Variables and Secrets** ← **Add**، نوع **Secret**، اسم `ADMIN_TOKEN` و رمزت رو بذار. ذخیره کن.
+3. آدرس `/settings` سایتت رو باز کن، توکن مدیر و آدرس API، کلید و مدل رو وارد کن و ذخیره کن.
 
-```bash
-npx wrangler secret put ADMIN_TOKEN
-```
+(همین مراحل توی `/setup#admin` هم هست.)
 
 ## امکانات
 - جستجو، پخش مستقیم، صفحهٔ کانال (با تب Videos و Shorts)

@@ -474,7 +474,11 @@ function pickBestModel(ids) {
   return ids[0] || "";
 }
 async function handleSettings(request, url) {
-  if (!ADMIN_TOKEN) return htmlPage("تنظیمات", "<p class='center'>ابتدا ADMIN_TOKEN را به‌عنوان Secret تنظیم کن.</p>", 503);
+  if (!ADMIN_TOKEN) return htmlPage("تنظیمات", `<div class="panel" style="max-width:640px;margin:20px auto;text-align:right">
+    <b>توکن مدیر هنوز تنظیم نشده</b>
+    <p class="note" style="margin-top:8px;line-height:2">برای فعال شدن این صفحه، یک Secret به نام <code>ADMIN_TOKEN</code> به ورکرت اضافه کن: داشبورد کلودفلر ← Workers &amp; Pages ← ورکرت ← Settings ← Variables and Secrets ← Add ← نوع Secret.</p>
+    <p class="note" style="margin-top:10px"><a class="btn" href="/setup#admin">راهنمای قدم‌به‌قدم</a></p>
+  </div>`, 503);
   if (!KV) return htmlPage("تنظیمات", "<p class='center'>کش KV تنظیم نشده است.</p>", 503);
   const f = {};
   if (request.method === "POST") { const fd = await request.formData(); fd.forEach((v, k) => { f[k] = String(v); }); }

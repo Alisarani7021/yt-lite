@@ -28,5 +28,18 @@ npx wrangler kv namespace create YT_CACHE
 npx wrangler deploy</pre>
   </div>
 
+  <div class="panel" id="admin" style="margin-bottom:14px">
+    <b>مرحلهٔ آخر: تنظیم ترجمهٔ AI (اختیاری ولی توصیه‌شده)</b>
+    <p class="note" style="margin-top:8px">بدون این مرحله، صفحهٔ <code>/settings</code> کار نمی‌کنه و ترجمه با مدل داخلی Cloudflare انجام می‌شه.</p>
+    <ol class="note" style="padding-inline-start:20px;margin-top:8px;line-height:2">
+      <li>یه رمز تصادفی بساز، حداقل ۱۶ کاراکتر (مثلاً با یه مدیر رمز یا یه جملهٔ طولانی و نامفهوم). این رمز «توکن مدیر» تو می‌شه؛ جایی یادداشتش کن.</li>
+      <li>برو به <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">داشبورد کلودفلر</a> ← <b>Workers &amp; Pages</b> ← ورکری که ساختی (مثلاً yt-lite).</li>
+      <li>تب <b>Settings</b> رو باز کن و بخش <b>Variables and Secrets</b> رو پیدا کن.</li>
+      <li>روی <b>Add</b> بزن، نوعش رو <b>Secret</b> بذار، اسمش رو دقیقاً <code>ADMIN_TOKEN</code> بنویس و رمز تصادفی‌ات رو توی مقدارش بذار. ذخیره کن.</li>
+      <li>چند ثانیه صبر کن، بعد آدرس <code>/settings</code> سایتت رو باز کن. توکن مدیر رو وارد کن، آدرس API (مثلاً <code>https://api.openai.com/v1</code>)، کلید و مدل رو بذار. روی «دریافت لیست مدل‌ها» بزن، بهترین مدل پیشنهاد می‌شه؛ بعد «ذخیره» رو بزن.</li>
+    </ol>
+    <p class="note" style="margin-top:8px">نکته: کلید API فقط توی KV ورکر خودت ذخیره می‌شه. اگه ورکرت رو دوباره Deploy کنی، Secret و تنظیمات سر جاشون می‌مونن.</p>
+  </div>
+
   <p class="note"><a href="/">← بازگشت به خانه</a></p>
 </div>
